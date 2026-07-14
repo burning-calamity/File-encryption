@@ -102,6 +102,16 @@ class FileEncryptorTests(unittest.TestCase):
             "function decryptWithCiphers",
             "Bifid",
             "ADFGVX",
+            "Base32",
+            "Base58",
+            "Base62",
+            "Base64",
+            "Base85",
+            "URL Percent",
+            "HTML Entities",
+            "Unicode Escape",
+            "JSON Escape",
+            "Quoted Printable",
             "CUSTOM_INDEX_CACHE",
         ]:
             self.assertIn(expected, html)

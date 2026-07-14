@@ -10,9 +10,12 @@ original extension and bytes.
 from __future__ import annotations
 
 import base64
+import html
 import io
 import json
 from pathlib import Path
+import quopri
+import urllib.parse
 import secrets
 import wave
 import string
@@ -34,6 +37,9 @@ DEFAULT_CIPHER_ORDER = [
     "Green",
 ]
 EXTRA_CIPHERS = [
+    "ROT5",
+    "ROT13",
+    "ROT18",
     "ROT47",
     "Affine",
     "Keyed Caesar",
@@ -59,6 +65,16 @@ EXTRA_CIPHERS = [
     "ADFGVX",
     "Octal",
     "Decimal ASCII",
+    "Base32",
+    "Base58",
+    "Base62",
+    "Base64",
+    "Base85",
+    "URL Percent",
+    "HTML Entities",
+    "Unicode Escape",
+    "JSON Escape",
+    "Quoted Printable",
 ]
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
 EXPANDING_CIPHERS = {
@@ -72,6 +88,16 @@ EXPANDING_CIPHERS = {
     "ADFGVX",
     "Octal",
     "Decimal ASCII",
+    "Base32",
+    "Base58",
+    "Base62",
+    "Base64",
+    "Base85",
+    "URL Percent",
+    "HTML Entities",
+    "Unicode Escape",
+    "JSON Escape",
+    "Quoted Printable",
 }
 KEYWORD_CIPHERS = {
     "Vigenere",
@@ -164,8 +190,11 @@ def hex_preview(data: bytes, limit: int = 512) -> str:
 
 CIPHER_RUNTIME = r'''
 import base64
+import html
 import json
 from pathlib import Path
+import quopri
+import urllib.parse
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
 ALPHABET_INDEX = {char: index for index, char in enumerate(ALPHABET)}
@@ -182,6 +211,16 @@ EXPANDING_CIPHERS = {
     "ADFGVX",
     "Octal",
     "Decimal ASCII",
+    "Base32",
+    "Base58",
+    "Base62",
+    "Base64",
+    "Base85",
+    "URL Percent",
+    "HTML Entities",
+    "Unicode Escape",
+    "JSON Escape",
+    "Quoted Printable",
 }
 KEYWORD_CIPHERS = {"Vigenere", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "Porta", "Alberti", "XOR Stream", "RC4 Stream"}
 
@@ -707,6 +746,90 @@ def decimal_ascii(text: str, decrypt: bool = False) -> str:
     return "".join(chr(int(chunk)) for chunk in chunks)
 
 
+def base32_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return base64.b32encode(text.encode("utf-8")).decode("ascii")
+    return base64.b32decode(text.encode("ascii"), casefold=True).decode("utf-8")
+
+
+def base_number_text(text: str, digits: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        data = text.encode("utf-8")
+        if not data:
+            return ""
+        value = int.from_bytes(data, "big")
+        encoded = []
+        while value:
+            value, remainder = divmod(value, len(digits))
+            encoded.append(digits[remainder])
+        leading_zeroes = len(data) - len(data.lstrip(b"\0"))
+        return digits[0] * leading_zeroes + "".join(reversed(encoded or [digits[0]]))
+
+    if not text:
+        return ""
+    value = 0
+    for char in text:
+        value = value * len(digits) + digits.index(char)
+    byte_length = max(1, (value.bit_length() + 7) // 8)
+    data = value.to_bytes(byte_length, "big") if value else b""
+    leading_zeroes = len(text) - len(text.lstrip(digits[0]))
+    return (b"\0" * leading_zeroes + data).decode("utf-8")
+
+
+def base58_text(text: str, decrypt: bool = False) -> str:
+    return base_number_text(text, "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", decrypt)
+
+
+def base62_text(text: str, decrypt: bool = False) -> str:
+    return base_number_text(text, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", decrypt)
+
+
+def base64_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return base64.b64decode(text.encode("ascii"), validate=True).decode("utf-8")
+
+
+def base85_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return base64.b85encode(text.encode("utf-8")).decode("ascii")
+    return base64.b85decode(text.encode("ascii")).decode("utf-8")
+
+
+def url_percent_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return urllib.parse.quote(text, safe="")
+    return urllib.parse.unquote(text)
+
+
+def html_entities_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return html.escape(text, quote=True)
+    return html.unescape(text)
+
+
+def unicode_escape_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return text.encode("unicode_escape").decode("ascii")
+    return text.encode("ascii").decode("unicode_escape")
+
+
+def json_escape_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return json.dumps(text, ensure_ascii=True)
+    return json.loads(text)
+
+
+def quoted_printable_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return quopri.encodestring(text.encode("utf-8"), quotetabs=True).decode("ascii")
+    return quopri.decodestring(text.encode("ascii")).decode("utf-8")
+
+
+def rot5(text: str) -> str:
+    return "".join(chr((ord(char) - ord("0") + 5) % 10 + ord("0")) if "0" <= char <= "9" else char for char in text)
+
+
 def quagmire(
     text: str,
     variant: int,
@@ -946,6 +1069,12 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
             params.get("purple_switches", "1-1,1,1-12"),
             params.get("purple_alphabet", "AEIOUYBCDFGHJKLMNPQRSTVWXZ"),
         )
+    if cipher == "ROT5":
+        return rot5(text)
+    if cipher == "ROT13":
+        return caesar(text, 13)
+    if cipher == "ROT18":
+        return rot5(caesar(text, 13))
     if cipher == "ROT47":
         return rot47(text)
     if cipher == "Affine":
@@ -996,6 +1125,26 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
         return octal_text(text, decrypt)
     if cipher == "Decimal ASCII":
         return decimal_ascii(text, decrypt)
+    if cipher == "Base32":
+        return base32_text(text, decrypt)
+    if cipher == "Base58":
+        return base58_text(text, decrypt)
+    if cipher == "Base62":
+        return base62_text(text, decrypt)
+    if cipher == "Base64":
+        return base64_text(text, decrypt)
+    if cipher == "Base85":
+        return base85_text(text, decrypt)
+    if cipher == "URL Percent":
+        return url_percent_text(text, decrypt)
+    if cipher == "HTML Entities":
+        return html_entities_text(text, decrypt)
+    if cipher == "Unicode Escape":
+        return unicode_escape_text(text, decrypt)
+    if cipher == "JSON Escape":
+        return json_escape_text(text, decrypt)
+    if cipher == "Quoted Printable":
+        return quoted_printable_text(text, decrypt)
     raise ValueError(f"unknown cipher: {cipher}")
 
 

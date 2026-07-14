@@ -50,16 +50,17 @@ download a standalone HTML decryptor. All file bytes stay in the browser; no
 server is required. The browser version currently implements the web-safe cipher
 set shown in the page, including Caesar, Vigenere, Atbash, ROT47, Affine, Keyed
 Caesar, Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence, Columnar
-Transposition, Bifid, Trifid, Porta, Trithemius, Alberti, Reverse, Binary,
-Baconian, Hex, Polybius Square, Morse Code, ADFGVX, Octal, Decimal ASCII, XOR
-Stream, and RC4 Stream. Use the Python GUI when you need Enigma, Purple,
+Transposition, Bifid, Trifid, Porta, Trithemius, Alberti, Reverse, ROT5, ROT13,
+ROT18, Binary, Baconian, Hex, Polybius Square, Morse Code, ADFGVX, Octal,
+Decimal ASCII, Base32, Base58, Base62, Base64, Base85, URL Percent, HTML Entities, Unicode
+Escape, JSON Escape, Quoted Printable, XOR Stream, and RC4 Stream. Use the Python GUI when you need Enigma, Purple,
 Red/Green rotor-style ciphers, or Quagmire variants.
 
 ## Payload-size safety
 
 Some ciphers in the list expand text substantially (for example Binary,
 Baconian, Hex, Polybius Square, Morse Code, XOR Stream, RC4 Stream, ADFGVX,
-Octal, and Decimal ASCII). The GUI's **Select all** action intentionally selects
+Octal, Decimal ASCII, Base32, Base58, Base62, Base64, Base85, URL Percent, HTML Entities, Unicode Escape, JSON Escape, and Quoted Printable). The GUI's **Select all** action intentionally selects
 only non-expanding ciphers, and script generation rejects stacks with more than
 one expanding cipher to avoid freezing the Tkinter main thread or producing huge
 decryptor scripts.

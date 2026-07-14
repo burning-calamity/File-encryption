@@ -85,8 +85,8 @@
 <script id="cipher-runtime">
 const ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=";
 const DEFAULT_CIPHER_ORDER = ["Caesar", "Vigenere", "Atbash"];
-const EXTRA_CIPHERS = ["ROT47", "Affine", "Keyed Caesar", "Beaufort", "Progressive Caesar", "Autokey", "Gronsfeld", "Rail Fence", "Columnar Transposition", "Bifid", "Trifid", "Porta", "Trithemius", "Alberti", "Reverse", "Binary", "Baconian", "Hex", "Polybius Square", "Morse Code", "XOR Stream", "RC4 Stream", "ADFGVX", "Octal", "Decimal ASCII"];
-const EXPANDING_CIPHERS = new Set(["Binary", "Baconian", "Hex", "Polybius Square", "Morse Code", "XOR Stream", "RC4 Stream", "ADFGVX", "Octal", "Decimal ASCII"]);
+const EXTRA_CIPHERS = ["ROT5", "ROT13", "ROT18", "ROT47", "Affine", "Keyed Caesar", "Beaufort", "Progressive Caesar", "Autokey", "Gronsfeld", "Rail Fence", "Columnar Transposition", "Bifid", "Trifid", "Porta", "Trithemius", "Alberti", "Reverse", "Binary", "Baconian", "Hex", "Polybius Square", "Morse Code", "XOR Stream", "RC4 Stream", "ADFGVX", "Octal", "Decimal ASCII", "Base32", "Base58", "Base62", "Base64", "Base85", "URL Percent", "HTML Entities", "Unicode Escape", "JSON Escape", "Quoted Printable"];
+const EXPANDING_CIPHERS = new Set(["Binary", "Baconian", "Hex", "Polybius Square", "Morse Code", "XOR Stream", "RC4 Stream", "ADFGVX", "Octal", "Decimal ASCII", "Base32", "Base58", "Base62", "Base64", "Base85", "URL Percent", "HTML Entities", "Unicode Escape", "JSON Escape", "Quoted Printable"]);
 const ALPHABET_INDEX = Object.fromEntries([...ALPHABET].map((c, i) => [c, i]));
 const GRID_CACHE = new Map();
 const CUSTOM_INDEX_CACHE = new Map([[ALPHABET, ALPHABET_INDEX]]);
@@ -132,6 +132,7 @@ function vigenere(text, key, decrypt = false) {
   }).join("");
 }
 function atbash(text) { return [...text].map(ch => /[A-Z]/.test(ch) ? String.fromCharCode(90 - (ch.charCodeAt(0) - 65)) : /[a-z]/.test(ch) ? String.fromCharCode(122 - (ch.charCodeAt(0) - 97)) : ch).join(""); }
+function rot5(text) { return [...text].map(ch => /[0-9]/.test(ch) ? String.fromCharCode(((ch.charCodeAt(0) - 48 + 5) % 10) + 48) : ch).join(""); }
 function rot47(text) { return [...text].map(ch => { const c = ch.charCodeAt(0); return c >= 33 && c <= 126 ? String.fromCharCode(33 + ((c - 33 + 47) % 94)) : ch; }).join(""); }
 function inverse(value, mod) { for (let i = 0; i < mod; i++) if ((value * i) % mod === 1) return i; throw new Error(`${value} has no inverse modulo ${mod}`); }
 function affine(text, a, b, decrypt = false) {
@@ -215,6 +216,31 @@ function baconian(text, decrypt = false) { return decrypt ? text.split(/\s+/).fi
 function polybius(text, decrypt = false) { return decrypt ? text.split(/\s+/).filter(Boolean).map(c => String.fromCodePoint(Number(c.slice(0, 2)) * 16 + Number(c.slice(2)))).join("") : [...text].map(c => `${Math.floor(c.codePointAt(0) / 16)}`.padStart(2, '0') + `${c.codePointAt(0) % 16}`.padStart(2, '0')).join(' '); }
 function morseCode(text, decrypt = false) { return decrypt ? text.split(' / ').filter(Boolean).map(c => String.fromCodePoint(parseInt(c.replaceAll('.', '0').replaceAll('-', '1'), 2))).join('') : [...text].map(c => c.codePointAt(0).toString(2).padStart(8, '0').replaceAll('0', '.').replaceAll('1', '-')).join(' / '); }
 function adfgvx(text, decrypt = false) { const symbols = 'ADFGVX', width = 8; if (!decrypt) return [...text].map(ch => { let value = ch.codePointAt(0), digits = []; for (let i = 0; i < width; i++) { digits.push(symbols[value % 6]); value = Math.floor(value / 6); } return digits.reverse().join(''); }).join(' '); return text.split(/\s+/).filter(Boolean).map(chunk => { if (chunk.length !== width || [...chunk].some(c => !symbols.includes(c))) throw new Error('ADFGVX chunks must be 8 symbols.'); let value = 0; for (const c of chunk) value = value * 6 + symbols.indexOf(c); return String.fromCodePoint(value); }).join(''); }
+function base32Text(text, decrypt = false) { const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; if (!decrypt) { const bytes = new TextEncoder().encode(text); let bits = '', out = ''; for (const byte of bytes) bits += byte.toString(2).padStart(8, '0'); for (let i = 0; i < bits.length; i += 5) out += alphabet[parseInt(bits.slice(i, i + 5).padEnd(5, '0'), 2)]; return out.padEnd(Math.ceil(out.length / 8) * 8, '='); } const clean = text.toUpperCase().replace(/=+$/, ''); let bits = ''; for (const ch of clean) { const value = alphabet.indexOf(ch); if (value < 0) throw new Error('Base32 text contains an invalid character.'); bits += value.toString(2).padStart(5, '0'); } const bytes = []; for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2)); return new TextDecoder().decode(new Uint8Array(bytes)); }
+function baseNumberText(text, digits, decrypt = false) {
+  const base = BigInt(digits.length);
+  if (!decrypt) {
+    const bytes = new TextEncoder().encode(text); if (!bytes.length) return '';
+    let value = 0n; for (const byte of bytes) value = value * 256n + BigInt(byte);
+    let encoded = ''; while (value > 0n) { const remainder = Number(value % base); encoded = digits[remainder] + encoded; value /= base; }
+    let zeroes = 0; while (zeroes < bytes.length && bytes[zeroes] === 0) zeroes++;
+    return digits[0].repeat(zeroes) + (encoded || digits[0]);
+  }
+  if (!text) return '';
+  let value = 0n; for (const ch of text) { const index = digits.indexOf(ch); if (index < 0) throw new Error('Invalid base digit.'); value = value * base + BigInt(index); }
+  const bytes = []; while (value > 0n) { bytes.unshift(Number(value % 256n)); value /= 256n; }
+  let zeroes = 0; while (zeroes < text.length && text[zeroes] === digits[0]) zeroes++;
+  return new TextDecoder().decode(new Uint8Array([...Array(zeroes).fill(0), ...bytes]));
+}
+function base58Text(text, decrypt = false) { return baseNumberText(text, '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz', decrypt); }
+function base62Text(text, decrypt = false) { return baseNumberText(text, '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', decrypt); }
+function base64Text(text, decrypt = false) { return decrypt ? new TextDecoder().decode(base64ToBytes(text)) : bytesToBase64(new TextEncoder().encode(text)); }
+function base85Text(text, decrypt = false) { if (!decrypt) { const bytes = new TextEncoder().encode(text), out = []; for (let i = 0; i < bytes.length; i += 4) { const chunk = bytes.slice(i, i + 4), padded = new Uint8Array(4); padded.set(chunk); let value = ((padded[0] * 256 + padded[1]) * 256 + padded[2]) * 256 + padded[3]; const chars = Array(5); for (let j = 4; j >= 0; j--) { chars[j] = String.fromCharCode((value % 85) + 33); value = Math.floor(value / 85); } out.push(chars.slice(0, chunk.length + 1).join('')); } return out.join(''); } const bytes = []; for (let i = 0; i < text.length; i += 5) { const chunk = text.slice(i, i + 5), padded = chunk.padEnd(5, 'u'); let value = 0; for (const ch of padded) value = value * 85 + (ch.charCodeAt(0) - 33); const block = new Uint8Array([value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]); bytes.push(...block.slice(0, chunk.length - 1)); } return new TextDecoder().decode(new Uint8Array(bytes)); }
+function urlPercentText(text, decrypt = false) { return decrypt ? decodeURIComponent(text) : encodeURIComponent(text); }
+function htmlEntitiesText(text, decrypt = false) { const encodeMap = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}; const decodeMap = {'amp':'&','lt':'<','gt':'>','quot':'"','#x27':"'",'#39':"'"}; return decrypt ? text.replace(/&([^;]+);/g, (match, name) => decodeMap[name] ?? match) : text.replace(/[&<>"']/g, ch => encodeMap[ch]); }
+function unicodeEscapeText(text, decrypt = false) { return decrypt ? text.replace(/\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})/g, (_m, wide, bmp) => String.fromCodePoint(parseInt(wide || bmp, 16))) : [...text].map(ch => { const cp = ch.codePointAt(0); return cp <= 0xffff ? `\\u${cp.toString(16).padStart(4, '0')}` : `\\u{${cp.toString(16)}}`; }).join(''); }
+function jsonEscapeText(text, decrypt = false) { return decrypt ? JSON.parse(text) : JSON.stringify(text); }
+function quotedPrintableText(text, decrypt = false) { if (!decrypt) return [...new TextEncoder().encode(text)].map(byte => (byte >= 33 && byte <= 126 && byte !== 61) ? String.fromCharCode(byte) : `=${byte.toString(16).toUpperCase().padStart(2, '0')}`).join(''); const bytes = []; for (let i = 0; i < text.length; i++) { if (text[i] === '=' && /[0-9A-Fa-f]{2}/.test(text.slice(i + 1, i + 3))) { bytes.push(parseInt(text.slice(i + 1, i + 3), 16)); i += 2; } else bytes.push(text.charCodeAt(i)); } return new TextDecoder().decode(new Uint8Array(bytes)); }
 function xorStream(text, key, decrypt = false) { const ks = [...key].map(c => c.charCodeAt(0)); if (!ks.length) throw new Error("XOR key required."); return decrypt ? text.split(/\s+/).filter(Boolean).map((h, i) => String.fromCharCode(parseInt(h, 16) ^ ks[i % ks.length])).join("") : [...text].map((c, i) => (c.charCodeAt(0) ^ ks[i % ks.length]).toString(16).padStart(2, "0")).join(" "); }
 function rc4Stream(text, key, decrypt = false) { const kb = [...key].map(c => c.charCodeAt(0)); if (!kb.length) throw new Error("RC4 key required."); const s = [...Array(256).keys()]; let j = 0; for (let i = 0; i < 256; i++) { j = (j + s[i] + kb[i % kb.length]) % 256; [s[i], s[j]] = [s[j], s[i]]; } let i = 0; j = 0; const next = () => { i = (i + 1) % 256; j = (j + s[i]) % 256; [s[i], s[j]] = [s[j], s[i]]; return s[(s[i] + s[j]) % 256]; }; return decrypt ? text.split(/\s+/).filter(Boolean).map(h => String.fromCharCode(parseInt(h, 16) ^ next())).join("") : [...text].map(c => (c.charCodeAt(0) ^ next()).toString(16).padStart(2, "0")).join(" "); }
 function applyCipher(text, cipher, p, decrypt = false) {
@@ -222,6 +248,9 @@ function applyCipher(text, cipher, p, decrypt = false) {
     case "Caesar": return caesar(text, Number(p.shift), decrypt);
     case "Vigenere": return vigenere(text, p.vigenere_key || p.key, decrypt);
     case "Atbash": return atbash(text);
+    case "ROT5": return rot5(text);
+    case "ROT13": return caesar(text, 13, decrypt);
+    case "ROT18": return rot5(caesar(text, 13, decrypt));
     case "ROT47": return rot47(text);
     case "Affine": return affine(text, Number(p.affine_a), Number(p.affine_b), decrypt);
     case "Keyed Caesar": return keyedCaesar(text, p.keyed_caesar_key || p.key, Number(p.shift), decrypt);
@@ -245,6 +274,16 @@ function applyCipher(text, cipher, p, decrypt = false) {
     case "ADFGVX": return adfgvx(text, decrypt);
     case "Octal": return decrypt ? chunkDecode(text, 8) : chunkEncode(text, 8, 3);
     case "Decimal ASCII": return decrypt ? chunkDecode(text, 10) : chunkEncode(text, 10, 3);
+    case "Base32": return base32Text(text, decrypt);
+    case "Base58": return base58Text(text, decrypt);
+    case "Base62": return base62Text(text, decrypt);
+    case "Base64": return base64Text(text, decrypt);
+    case "Base85": return base85Text(text, decrypt);
+    case "URL Percent": return urlPercentText(text, decrypt);
+    case "HTML Entities": return htmlEntitiesText(text, decrypt);
+    case "Unicode Escape": return unicodeEscapeText(text, decrypt);
+    case "JSON Escape": return jsonEscapeText(text, decrypt);
+    case "Quoted Printable": return quotedPrintableText(text, decrypt);
     case "XOR Stream": return xorStream(text, p.stream_key || p.key, decrypt);
     case "RC4 Stream": return rc4Stream(text, p.stream_key || p.key, decrypt);
     default: throw new Error(`Cipher not implemented in the web builder: ${cipher}`);
