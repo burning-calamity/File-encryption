@@ -27,6 +27,8 @@ PARAMS = {
     "enigma_rotors": "I II III",
     "enigma_ring_settings": "AAA",
     "enigma_reflector": "B",
+    "purple_switches": "9-1,24,6-23",
+    "purple_alphabet": "NOKTYUXEQLHBRMPDICJASVWGZF",
     "affine_a": "2",
     "affine_b": "7",
     "step": "3",
@@ -62,7 +64,7 @@ class FileEncryptorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             script_path = Path(directory) / "decryptor.py"
             script_path.write_text(script, encoding="utf-8")
-            user_input = "PlainKey\nCipherKey\nIndicator\nSecretKey9\n7\nABC\nAZ BY\nI II III\nAAA\nB\n2\n7\n3\n1\nout.bin\n"
+            user_input = "PlainKey\nCipherKey\nIndicator\nSecretKey9\n7\nABC\nAZ BY\nI II III\nAAA\nB\n9-1,24,6-23\nNOKTYUXEQLHBRMPDICJASVWGZF\n2\n7\n3\n1\nout.bin\n"
             result = subprocess.run(
                 [sys.executable, str(script_path)],
                 input=user_input,
@@ -93,6 +95,11 @@ class FileEncryptorTests(unittest.TestCase):
                 encrypted = apply_cipher(text, cipher, PARAMS, decrypt=False)
                 self.assertEqual(apply_cipher(encrypted, cipher, PARAMS, decrypt=True), text)
 
+    def test_trifid_handles_base64_payload_regression(self):
+        text = "AAU="
+        encrypted = apply_cipher(text, "Trifid", PARAMS, decrypt=False)
+        self.assertEqual(apply_cipher(encrypted, "Trifid", PARAMS, decrypt=True), text)
+
     def test_enigma_plugboard_affects_encryption_and_round_trips(self):
         text = "abcdEFGH123+/="
         no_plugboard = PARAMS | {"plugboard_pairs": ""}
@@ -121,6 +128,15 @@ class FileEncryptorTests(unittest.TestCase):
         encrypted = apply_cipher(text, "Enigma", params, decrypt=False)
         self.assertNotEqual(encrypted, text)
         self.assertEqual(apply_cipher(encrypted, "Enigma", params, decrypt=True), text)
+
+    def test_purple_settings_affect_output_and_validate(self):
+        text = "PURPLEMACHINE"
+        encrypted = apply_cipher(text, "Purple", PARAMS, decrypt=False)
+        changed = PARAMS | {"purple_switches": "1-1,1,1-12"}
+        self.assertNotEqual(apply_cipher(text, "Purple", changed, decrypt=False), encrypted)
+        self.assertEqual(apply_cipher(encrypted, "Purple", PARAMS, decrypt=True), text)
+        with self.assertRaises(ValueError):
+            validate_params(["Purple"], PARAMS | {"purple_alphabet": "ABC"})
 
     def test_quagmire_iv_uses_separate_settings(self):
         text = "abcdEFGH123+/="

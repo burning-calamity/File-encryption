@@ -346,8 +346,14 @@ def columnar_transposition(text: str, key: str, decrypt: bool = False) -> str:
 
 def _grid_alphabet(size: int) -> str:
     padding = "!#$%&()*,-.:;<>?@[]^_`{|}~" + "\u00a1\u00a2\u00a3\u00a4\u00a5\u00a6\u00a7\u00a8\u00a9\u00aa\u00ab\u00ac\u00ae\u00af"
-    grid = ALPHABET + "".join(char for char in padding if char not in ALPHABET)
-    return grid[:size]
+    grid_chars = list(ALPHABET + "".join(char for char in padding if char not in ALPHABET))
+    codepoint = 0x0100
+    while len(grid_chars) < size:
+        char = chr(codepoint)
+        if char not in grid_chars and char.isprintable():
+            grid_chars.append(char)
+        codepoint += 1
+    return "".join(grid_chars[:size])
 
 
 def _replace_grid_chars(text: str, transformed: str, grid: str) -> str:
@@ -651,6 +657,47 @@ def enigma_machine(
     return "".join(output)
 
 
+def parse_purple_settings(switches: str, alphabet_setting: str) -> tuple[int, str]:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    plugboard = (alphabet_setting or "AEIOUYBCDFGHJKLMNPQRSTVWXZ").upper()
+    if len(plugboard) != 26 or set(plugboard) != set(alphabet):
+        raise ValueError("Purple alphabet must be a 26-letter permutation, e.g. AEIOUYBCDFGHJKLMNPQRSTVWXZ.")
+    setting = switches or "1-1,1,1-12"
+    try:
+        sixes, twenties, speed = setting.split("-")
+        twenty_positions = [int(value) for value in twenties.split(",")]
+        if len(twenty_positions) != 3 or len(speed) != 2:
+            raise ValueError
+        values = [int(sixes), *twenty_positions, int(speed[0]), int(speed[1])]
+    except ValueError as exc:
+        raise ValueError("Purple switches must use syntax like 9-1,24,6-23.") from exc
+    if not all(1 <= value <= 25 for value in values[:4]) or not all(1 <= value <= 3 for value in values[4:]):
+        raise ValueError("Purple switch positions must be 1-25 and motion switches must be 1-3.")
+    if values[4] == values[5]:
+        raise ValueError("Purple fast and middle switches must be different.")
+    return sum(values), plugboard
+
+
+def purple_style_machine(text: str, switches: str, alphabet_setting: str, decrypt: bool = False) -> str:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    shift_seed, plugboard = parse_purple_settings(switches, alphabet_setting)
+    inverse_plugboard = {char: alphabet[index] for index, char in enumerate(plugboard)}
+    out = []
+    for index, char in enumerate(text):
+        if char.upper() not in alphabet:
+            out.append(char)
+            continue
+        shift = (shift_seed + index) % 26
+        if decrypt:
+            wired = shift_letter(char.upper(), -shift)
+            mapped = inverse_plugboard[wired]
+        else:
+            mapped = plugboard[alphabet.index(char.upper())]
+            mapped = shift_letter(mapped, shift)
+        out.append(mapped if char.isupper() else mapped.lower())
+    return "".join(out)
+
+
 def rotor_machine(
     text: str,
     key: str,
@@ -661,9 +708,13 @@ def rotor_machine(
     enigma_rotors: str = "I II III",
     enigma_ring_settings: str = "AAA",
     enigma_reflector: str = "B",
+    purple_switches: str = "1-1,1,1-12",
+    purple_alphabet: str = "AEIOUYBCDFGHJKLMNPQRSTVWXZ",
 ) -> str:
     if machine == "Enigma":
         return enigma_machine(text, rotor_positions, plugboard_pairs, enigma_rotors, enigma_ring_settings, enigma_reflector)
+    if machine == "Purple":
+        return purple_style_machine(text, purple_switches, purple_alphabet, decrypt)
 
     machine_seeds = {
         "Enigma": "EKMFLGDQVZNTOWYHXUSPAIBRCJ0123456789+/=",
@@ -702,6 +753,8 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
             params.get("enigma_rotors", "I II III"),
             params.get("enigma_ring_settings", "AAA"),
             params.get("enigma_reflector", "B"),
+            params.get("purple_switches", "1-1,1,1-12"),
+            params.get("purple_alphabet", "AEIOUYBCDFGHJKLMNPQRSTVWXZ"),
         )
     if cipher == "ROT47":
         return rot47(text)
@@ -794,6 +847,11 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
             params.get("enigma_ring_settings", "AAA"),
             params.get("enigma_reflector", "B"),
         )
+    if "Purple" in ciphers:
+        parse_purple_settings(
+            params.get("purple_switches", "1-1,1,1-12"),
+            params.get("purple_alphabet", "AEIOUYBCDFGHJKLMNPQRSTVWXZ"),
+        )
     if "Gronsfeld" in ciphers and not any(char.isdigit() for char in params.get("gronsfeld_digits", "")):
         raise ValueError("Gronsfeld requires at least one digit.")
     if "Rail Fence" in ciphers:
@@ -825,6 +883,8 @@ def required_parameter_names(ciphers: list[str]) -> list[str]:
         names.append("rotor_positions")
     if "Enigma" in ciphers:
         names.extend(["plugboard_pairs", "enigma_rotors", "enigma_ring_settings", "enigma_reflector"])
+    if "Purple" in ciphers:
+        names.extend(["purple_switches", "purple_alphabet"])
     if "Affine" in ciphers:
         names.extend(["affine_a", "affine_b"])
     if "Progressive Caesar" in ciphers:
@@ -864,6 +924,8 @@ def main() -> None:
         "enigma_rotors": "Enigma rotor order used by the encrypter (for example I II III): ",
         "enigma_ring_settings": "Enigma ring settings used by the encrypter (for example AAA or AAAA): ",
         "enigma_reflector": "Enigma reflector used by the encrypter (B, C, B Thin, or C Thin): ",
+        "purple_switches": "Purple switch settings used by the encrypter (e.g. 9-1,24,6-23): ",
+        "purple_alphabet": "Purple plugboard alphabet used by the encrypter: ",
         "affine_a": "Affine multiplier a used by the encrypter: ",
         "affine_b": "Affine shift b used by the encrypter: ",
         "step": "Progressive Caesar step used by the encrypter: ",
@@ -912,6 +974,8 @@ class FileEncryptionApp(tk.Tk):
         self.enigma_rotors = tk.StringVar(value="I II III")
         self.enigma_ring_settings = tk.StringVar(value="AAA")
         self.enigma_reflector = tk.StringVar(value="B")
+        self.purple_switches = tk.StringVar(value="1-1,1,1-12")
+        self.purple_alphabet = tk.StringVar(value="AEIOUYBCDFGHJKLMNPQRSTVWXZ")
         self.status = tk.StringVar(value="Choose a file to begin.")
         self.cipher_vars = {name: tk.BooleanVar(value=name in DEFAULT_CIPHER_ORDER) for name in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS}
 
@@ -988,6 +1052,8 @@ class FileEncryptionApp(tk.Tk):
             ("enigma_rotors", "Rotor order (Enigma only, e.g. I II III)", ttk.Entry(params_frame, textvariable=self.enigma_rotors)),
             ("enigma_ring_settings", "Ring settings (Enigma/M4, e.g. AAA or AAAA)", ttk.Entry(params_frame, textvariable=self.enigma_ring_settings)),
             ("enigma_reflector", "Reflector (Enigma/M4: B, C, B Thin, C Thin)", ttk.Entry(params_frame, textvariable=self.enigma_reflector)),
+            ("purple_switches", "Switches (Purple only, e.g. 9-1,24,6-23)", ttk.Entry(params_frame, textvariable=self.purple_switches)),
+            ("purple_alphabet", "Plugboard alphabet (Purple only)", ttk.Entry(params_frame, textvariable=self.purple_alphabet)),
             ("affine_a", "Affine a (Affine only, coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
             ("affine_b", "Affine b (Affine only)", ttk.Spinbox(params_frame, from_=0, to=64, textvariable=self.affine_b, width=10)),
             ("step", "Progressive step (Progressive Caesar only)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.step, width=10)),
@@ -1074,6 +1140,8 @@ class FileEncryptionApp(tk.Tk):
                 "enigma_rotors": self.enigma_rotors.get().strip(),
                 "enigma_ring_settings": self.enigma_ring_settings.get().strip(),
                 "enigma_reflector": self.enigma_reflector.get().strip(),
+                "purple_switches": self.purple_switches.get().strip(),
+                "purple_alphabet": self.purple_alphabet.get().strip(),
                 "affine_a": self.affine_a.get().strip(),
                 "affine_b": self.affine_b.get().strip(),
                 "step": self.step.get().strip(),

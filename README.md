@@ -8,7 +8,8 @@ The cipher list is inspired by the
 [`op-message-encryptor-and-decryptor`](https://github.com/burning-calamity/op-message-encryptor-and-decryptor/tree/main)
 project and includes Caesar, Vigenere, Atbash, Quagmire I-IV, Enigma-style
 with M3/M4 rotor support, plugboard, rotor order, ring settings, and reflectors,
-Red/Purple/Green rotor-machine-style ciphers, ROT47, Affine, Keyed Caesar,
+Red/Purple/Green rotor-machine-style ciphers, with Purple switch/alphabet
+settings following the gremmie/purple syntax, ROT47, Affine, Keyed Caesar,
 Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence with starting
 offset, Columnar Transposition, Bifid, Trifid, Reverse, Binary, Baconian, Hex,
 Polybius Square, Morse Code, XOR Stream, RC4 Stream, ADFGVX, Octal, and
@@ -25,8 +26,9 @@ python file_encryptor_gui.py
 3. Pick or keep the generated parameters. Parameter fields appear only when
    at least one selected cipher needs them, including separate Quagmire
    plaintext/ciphertext/indicator keys, optional Enigma plugboard pairs, rotor
-   order, ring settings, reflector/M4 settings, and Rail Fence offsets, so
-   cipher-specific values are less likely to be confused. Hidden parameters are
+   order, ring settings, reflector/M4 settings, Purple switch/alphabet settings,
+   and Rail Fence offsets, so cipher-specific values are less likely to be
+   confused. Hidden parameters are
    not parsed for deselected ciphers.
 4. Save the generated `*_encrypted_decryptor.py` script.
 5. Keep the chosen parameters somewhere safe. The generated script asks for the
@@ -54,8 +56,8 @@ python -m unittest -v
 The included tests verify every cipher can round-trip text, known historical
 vectors for Caesar, Vigenere, Atbash, Rail Fence, and Enigma match expected
 output, the generated decryptor can restore a payload with a representative
-layered cipher stack,
-invalid Affine parameters are rejected, Enigma plugboard/rotor/ring/reflector/M4
-settings and Quagmire-specific settings round-trip correctly, hidden numeric
+layered cipher stack, invalid Affine parameters are rejected, Enigma
+plugboard/rotor/ring/reflector/M4 settings, Purple switch/alphabet settings,
+and Quagmire-specific settings round-trip correctly, hidden numeric
 fields do not block unrelated stacks, and unsafe combinations of multiple
 text-expanding ciphers are rejected before a decryptor is created.
