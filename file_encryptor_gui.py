@@ -41,6 +41,8 @@ EXTRA_CIPHERS = [
     "Gronsfeld",
     "Rail Fence",
     "Columnar Transposition",
+    "Bifid",
+    "Trifid",
     "Reverse",
     "Binary",
     "Baconian",
@@ -121,30 +123,67 @@ def translate_alphabet(text: str, source: str, target: str) -> str:
     return "".join(table.get(char, char) for char in text)
 
 
+def shift_letter(char: str, shift: int) -> str:
+    if "A" <= char <= "Z":
+        return chr((ord(char) - ord("A") + shift) % 26 + ord("A"))
+    if "a" <= char <= "z":
+        return chr((ord(char) - ord("a") + shift) % 26 + ord("a"))
+    return char
+
+
+def letter_key_shifts(key: str) -> list[int]:
+    shifts = [ord(char.upper()) - ord("A") for char in key if char.isalpha()]
+    if not shifts:
+        raise ValueError("key must contain at least one letter for this cipher")
+    return shifts
+
+
 def caesar(text: str, shift: int, decrypt: bool = False) -> str:
     if decrypt:
         shift = -shift
-    return "".join(ALPHABET[(ALPHABET.index(char) + shift) % len(ALPHABET)] if char in ALPHABET else char for char in text)
+    return "".join(shift_letter(char, shift) for char in text)
 
 
 def vigenere(text: str, key: str, decrypt: bool = False, alphabet: str = ALPHABET) -> str:
-    shifts = key_indexes(key, alphabet)
+    if alphabet != ALPHABET:
+        shifts = key_indexes(key, alphabet)
+        result = []
+        key_position = 0
+        for char in text:
+            if char not in alphabet:
+                result.append(char)
+                continue
+            shift = shifts[key_position % len(shifts)]
+            if decrypt:
+                shift = -shift
+            result.append(alphabet[(alphabet.index(char) + shift) % len(alphabet)])
+            key_position += 1
+        return "".join(result)
+
+    shifts = letter_key_shifts(key)
     result = []
     key_position = 0
     for char in text:
-        if char not in alphabet:
+        if not char.isalpha():
             result.append(char)
             continue
         shift = shifts[key_position % len(shifts)]
         if decrypt:
             shift = -shift
-        result.append(alphabet[(alphabet.index(char) + shift) % len(alphabet)])
+        result.append(shift_letter(char, shift))
         key_position += 1
     return "".join(result)
 
-
 def atbash(text: str) -> str:
-    return "".join(ALPHABET[-ALPHABET.index(char) - 1] if char in ALPHABET else char for char in text)
+    out = []
+    for char in text:
+        if "A" <= char <= "Z":
+            out.append(chr(ord("Z") - (ord(char) - ord("A"))))
+        elif "a" <= char <= "z":
+            out.append(chr(ord("z") - (ord(char) - ord("a"))))
+        else:
+            out.append(char)
+    return "".join(out)
 
 
 def rot47(text: str) -> str:
@@ -253,12 +292,12 @@ def gronsfeld(text: str, digits: str, decrypt: bool = False) -> str:
     return "".join(out)
 
 
-def rail_fence(text: str, rails: int, decrypt: bool = False) -> str:
+def rail_fence(text: str, rails: int, offset: int = 0, decrypt: bool = False) -> str:
     if rails < 2:
         raise ValueError("Rail Fence rails must be at least 2.")
     pattern = []
-    rail = 0
-    direction = 1
+    rail = offset % rails
+    direction = 1 if rail == 0 else -1
     for _ in text:
         pattern.append(rail)
         if rail == 0:
@@ -303,6 +342,71 @@ def columnar_transposition(text: str, key: str, decrypt: bool = False) -> str:
             if row < len(columns[column]):
                 out.append(columns[column][row])
     return "".join(out)
+
+
+def _grid_alphabet(size: int) -> str:
+    padding = "!#$%&()*,-.:;<>?@[]^_`{|}~" + "\u00a1\u00a2\u00a3\u00a4\u00a5\u00a6\u00a7\u00a8\u00a9\u00aa\u00ab\u00ac\u00ae\u00af"
+    grid = ALPHABET + "".join(char for char in padding if char not in ALPHABET)
+    return grid[:size]
+
+
+def _replace_grid_chars(text: str, transformed: str, grid: str) -> str:
+    iterator = iter(transformed)
+    return "".join(next(iterator) if char in grid else char for char in text)
+
+
+def bifid(text: str, decrypt: bool = False) -> str:
+    width = 9
+    grid = _grid_alphabet(width * width)
+    supported = [char for char in text if char in grid]
+    if not supported:
+        return text
+    if not decrypt:
+        rows = [grid.index(char) // width for char in supported]
+        columns = [grid.index(char) % width for char in supported]
+        merged = rows + columns
+        transformed = "".join(grid[merged[index] * width + merged[index + 1]] for index in range(0, len(merged), 2))
+        return _replace_grid_chars(text, transformed, grid)
+    coords = []
+    for char in supported:
+        value = grid.index(char)
+        coords.extend([value // width, value % width])
+    midpoint = len(coords) // 2
+    transformed = "".join(grid[coords[index] * width + coords[midpoint + index]] for index in range(midpoint))
+    return _replace_grid_chars(text, transformed, grid)
+
+
+def trifid(text: str, decrypt: bool = False) -> str:
+    width = 5
+    grid = _grid_alphabet(width ** 3)
+    supported = [char for char in text if char in grid]
+    if not supported:
+        return text
+    if not decrypt:
+        layers = []
+        rows = []
+        columns = []
+        for char in supported:
+            value = grid.index(char)
+            layers.append(value // 25)
+            rows.append((value // 5) % 5)
+            columns.append(value % 5)
+        merged = layers + rows + columns
+        transformed = "".join(
+            grid[merged[index] * 25 + merged[index + 1] * 5 + merged[index + 2]]
+            for index in range(0, len(merged), 3)
+        )
+        return _replace_grid_chars(text, transformed, grid)
+    coords = []
+    for char in supported:
+        value = grid.index(char)
+        coords.extend([value // 25, (value // 5) % 5, value % 5])
+    third = len(coords) // 3
+    transformed = "".join(
+        grid[coords[index] * 25 + coords[third + index] * 5 + coords[third * 2 + index]]
+        for index in range(third)
+    )
+    return _replace_grid_chars(text, transformed, grid)
 
 
 def reverse_text(text: str) -> str:
@@ -435,7 +539,132 @@ def quagmire(
     return "".join(out)
 
 
-def rotor_machine(text: str, key: str, rotor_positions: str, machine: str, decrypt: bool = False) -> str:
+def plugboard_map(text: str, pairs: str) -> str:
+    mapping = {}
+    for token in pairs.replace(",", " ").split():
+        if len(token) != 2 or token[0] not in ALPHABET or token[1] not in ALPHABET:
+            raise ValueError("Plugboard pairs must be two supported characters, for example 'AB CD'.")
+        left, right = token
+        if left in mapping or right in mapping:
+            raise ValueError("Plugboard characters cannot be reused across pairs.")
+        mapping[left] = right
+        mapping[right] = left
+    return "".join(mapping.get(char, char) for char in text)
+
+
+def parse_enigma_plugboard(pairs: str) -> dict[str, str]:
+    mapping = {}
+    for token in pairs.replace(",", " ").upper().split():
+        if len(token) != 2 or not token.isalpha():
+            raise ValueError("Enigma plugboard pairs must be two letters, for example 'AB CD'.")
+        left, right = token
+        if left == right or left in mapping or right in mapping:
+            raise ValueError("Enigma plugboard letters cannot be paired with themselves or reused.")
+        mapping[left] = right
+        mapping[right] = left
+    return mapping
+
+
+def enigma_machine(
+    text: str,
+    rotor_positions: str,
+    plugboard_pairs: str = "",
+    rotor_order: str = "I II III",
+    ring_settings: str = "AAA",
+    reflector_name: str = "B",
+) -> str:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    rotor_wirings = {
+        "I": ("EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q"),
+        "II": ("AJDKSIRUXBLHWTMCQGZNPYFVOE", "E"),
+        "III": ("BDFHJLCPRTXVZNYEIWGAKMUSQO", "V"),
+        "IV": ("ESOVPZJAYQUIRHXLNFTGKDCMWB", "J"),
+        "V": ("VZBRGITYUPSDNHLXAWMJQOFECK", "Z"),
+        "VI": ("JPGVOUMFYQBENHZRDKASXLICTW", "ZM"),
+        "VII": ("NZJHGRCXMYSWBOUFAIVLPEKQDT", "ZM"),
+        "VIII": ("FKQHTLXOCBJSPDZRAMEWNIUYGV", "ZM"),
+        "BETA": ("LEYJVCNIXWPBQMDRTAKZGFUHOS", ""),
+        "GAMMA": ("FSOKANUERHMBTIYCWLQPZXVGJD", ""),
+    }
+    reflectors = {
+        "B": "YRUHQSLDPXNGOKMIEBFZCWVJAT",
+        "C": "FVPJIAOYEDRZXWGCTKUQSBNMHL",
+        "B THIN": "ENKQAUYWJICOPBLMDXZVFTHRGS",
+        "C THIN": "RDOBJNTKVEHMLFCWZAXGYIPSUQ",
+    }
+    rotor_names = rotor_order.replace(",", " ").upper().split() or ["I", "II", "III"]
+    if len(rotor_names) not in {3, 4} or any(name not in rotor_wirings for name in rotor_names):
+        raise ValueError("Enigma rotor order must contain three or four rotors from I-VIII plus optional Beta/Gamma.")
+    if len(rotor_names) == 4 and rotor_names[0] not in {"BETA", "GAMMA"}:
+        raise ValueError("Enigma M4 mode requires Beta or Gamma as the leftmost fourth rotor.")
+    reflector_key = reflector_name.upper().replace("-", " ").strip() or ("B THIN" if len(rotor_names) == 4 else "B")
+    if reflector_key not in reflectors:
+        raise ValueError("Enigma reflector must be B, C, B Thin, or C Thin.")
+    reflector = reflectors[reflector_key]
+    defaults = "AAAA" if len(rotor_names) == 4 else "AAA"
+    positions_text = "".join(char for char in rotor_positions.upper() if char in alphabet) or defaults
+    rings_text = "".join(char for char in ring_settings.upper() if char in alphabet) or defaults
+    positions = [(alphabet.index((positions_text + defaults)[index])) for index in range(len(rotor_names))]
+    rings = [(alphabet.index((rings_text + defaults)[index])) for index in range(len(rotor_names))]
+    plugboard = parse_enigma_plugboard(plugboard_pairs)
+
+    def rotor_forward(value: int, rotor_name: str, position: int, ring: int) -> int:
+        wiring = rotor_wirings[rotor_name][0]
+        shifted = (value + position - ring) % 26
+        wired = alphabet.index(wiring[shifted])
+        return (wired - position + ring) % 26
+
+    def rotor_backward(value: int, rotor_name: str, position: int, ring: int) -> int:
+        wiring = rotor_wirings[rotor_name][0]
+        shifted = (value + position - ring) % 26
+        wired = wiring.index(alphabet[shifted])
+        return (wired - position + ring) % 26
+
+    def step_rotors() -> None:
+        moving_offset = len(rotor_names) - 3
+        left = moving_offset
+        middle = moving_offset + 1
+        right = moving_offset + 2
+        if alphabet[positions[middle]] in rotor_wirings[rotor_names[middle]][1]:
+            positions[left] = (positions[left] + 1) % 26
+            positions[middle] = (positions[middle] + 1) % 26
+        elif alphabet[positions[right]] in rotor_wirings[rotor_names[right]][1]:
+            positions[middle] = (positions[middle] + 1) % 26
+        positions[right] = (positions[right] + 1) % 26
+
+    output = []
+    for char in text:
+        if char.upper() not in alphabet:
+            output.append(char)
+            continue
+        step_rotors()
+        upper = char.upper()
+        upper = plugboard.get(upper, upper)
+        value = alphabet.index(upper)
+        for rotor_index in range(len(rotor_names) - 1, -1, -1):
+            value = rotor_forward(value, rotor_names[rotor_index], positions[rotor_index], rings[rotor_index])
+        value = alphabet.index(reflector[value])
+        for rotor_index in range(len(rotor_names)):
+            value = rotor_backward(value, rotor_names[rotor_index], positions[rotor_index], rings[rotor_index])
+        upper = plugboard.get(alphabet[value], alphabet[value])
+        output.append(upper if char.isupper() else upper.lower())
+    return "".join(output)
+
+
+def rotor_machine(
+    text: str,
+    key: str,
+    rotor_positions: str,
+    machine: str,
+    plugboard_pairs: str = "",
+    decrypt: bool = False,
+    enigma_rotors: str = "I II III",
+    enigma_ring_settings: str = "AAA",
+    enigma_reflector: str = "B",
+) -> str:
+    if machine == "Enigma":
+        return enigma_machine(text, rotor_positions, plugboard_pairs, enigma_rotors, enigma_ring_settings, enigma_reflector)
+
     machine_seeds = {
         "Enigma": "EKMFLGDQVZNTOWYHXUSPAIBRCJ0123456789+/=",
         "Red": "REDTYPEXabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=",
@@ -463,7 +692,17 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
             decrypt,
         )
     if cipher in MACHINE_CIPHERS:
-        return rotor_machine(text, params["key"], params["rotor_positions"], cipher, decrypt)
+        return rotor_machine(
+            text,
+            params["key"],
+            params["rotor_positions"],
+            cipher,
+            params.get("plugboard_pairs", ""),
+            decrypt,
+            params.get("enigma_rotors", "I II III"),
+            params.get("enigma_ring_settings", "AAA"),
+            params.get("enigma_reflector", "B"),
+        )
     if cipher == "ROT47":
         return rot47(text)
     if cipher == "Affine":
@@ -479,9 +718,13 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher == "Gronsfeld":
         return gronsfeld(text, params["gronsfeld_digits"], decrypt)
     if cipher == "Rail Fence":
-        return rail_fence(text, int(params["rails"]), decrypt)
+        return rail_fence(text, int(params["rails"]), int(params.get("rail_offset", "0") or 0), decrypt)
     if cipher == "Columnar Transposition":
         return columnar_transposition(text, params["key"], decrypt)
+    if cipher == "Bifid":
+        return bifid(text, decrypt)
+    if cipher == "Trifid":
+        return trifid(text, decrypt)
     if cipher == "Reverse":
         return reverse_text(text)
     if cipher == "Binary":
@@ -542,10 +785,21 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
         if not params.get("key"):
             raise ValueError("A shared keyword/key is required for the selected ciphers.")
         key_indexes(params["key"])
+    if "Enigma" in ciphers:
+        enigma_machine(
+            "",
+            params.get("rotor_positions", "AAA"),
+            params.get("plugboard_pairs", ""),
+            params.get("enigma_rotors", "I II III"),
+            params.get("enigma_ring_settings", "AAA"),
+            params.get("enigma_reflector", "B"),
+        )
     if "Gronsfeld" in ciphers and not any(char.isdigit() for char in params.get("gronsfeld_digits", "")):
         raise ValueError("Gronsfeld requires at least one digit.")
-    if "Rail Fence" in ciphers and int(params.get("rails", "0")) < 2:
-        raise ValueError("Rail Fence rails must be at least 2.")
+    if "Rail Fence" in ciphers:
+        if int(params.get("rails", "0")) < 2:
+            raise ValueError("Rail Fence rails must be at least 2.")
+        int(params.get("rail_offset", "0") or 0)
     if "Affine" in ciphers:
         a = int(params["affine_a"])
         b = int(params["affine_b"])
@@ -569,6 +823,8 @@ def required_parameter_names(ciphers: list[str]) -> list[str]:
         names.append("shift")
     if any(cipher in MACHINE_CIPHERS for cipher in ciphers):
         names.append("rotor_positions")
+    if "Enigma" in ciphers:
+        names.extend(["plugboard_pairs", "enigma_rotors", "enigma_ring_settings", "enigma_reflector"])
     if "Affine" in ciphers:
         names.extend(["affine_a", "affine_b"])
     if "Progressive Caesar" in ciphers:
@@ -576,7 +832,7 @@ def required_parameter_names(ciphers: list[str]) -> list[str]:
     if "Gronsfeld" in ciphers:
         names.append("gronsfeld_digits")
     if "Rail Fence" in ciphers:
-        names.append("rails")
+        names.extend(["rails", "rail_offset"])
     return names
 
 
@@ -604,11 +860,16 @@ def main() -> None:
         "quagmire_indicator_key": "Quagmire indicator key used by the encrypter: ",
         "shift": "Caesar/keyed shift used by the encrypter: ",
         "rotor_positions": "Rotor positions used by the encrypter: ",
+        "plugboard_pairs": "Enigma plugboard pairs used by the encrypter (blank if none): ",
+        "enigma_rotors": "Enigma rotor order used by the encrypter (for example I II III): ",
+        "enigma_ring_settings": "Enigma ring settings used by the encrypter (for example AAA or AAAA): ",
+        "enigma_reflector": "Enigma reflector used by the encrypter (B, C, B Thin, or C Thin): ",
         "affine_a": "Affine multiplier a used by the encrypter: ",
         "affine_b": "Affine shift b used by the encrypter: ",
         "step": "Progressive Caesar step used by the encrypter: ",
         "gronsfeld_digits": "Gronsfeld digit key used by the encrypter: ",
         "rails": "Rail Fence rail count used by the encrypter: ",
+        "rail_offset": "Rail Fence starting rail offset used by the encrypter: ",
     }}
     for name in json.loads(REQUIRED_PARAMETERS):
         params[name] = input(prompts[name]).strip()
@@ -635,17 +896,22 @@ class FileEncryptionApp(tk.Tk):
         self.resizable(True, True)
 
         self.file_path = tk.StringVar()
-        self.shift = tk.IntVar(value=secrets.randbelow(len(ALPHABET) - 1) + 1)
-        self.step = tk.IntVar(value=1)
-        self.rails = tk.IntVar(value=3)
+        self.shift = tk.StringVar(value=str(secrets.randbelow(len(ALPHABET) - 1) + 1))
+        self.step = tk.StringVar(value="1")
+        self.rails = tk.StringVar(value="3")
+        self.rail_offset = tk.StringVar(value="0")
         self.gronsfeld_digits = tk.StringVar(value="314159")
-        self.affine_a = tk.IntVar(value=2)
-        self.affine_b = tk.IntVar(value=7)
+        self.affine_a = tk.StringVar(value="2")
+        self.affine_b = tk.StringVar(value="7")
         self.cipher_key = tk.StringVar(value=secrets.token_urlsafe(12).replace("-", "A").replace("_", "B"))
         self.quagmire_plain_key = tk.StringVar(value="PLAINTEXT")
         self.quagmire_cipher_key = tk.StringVar(value="CIPHERTEXT")
         self.quagmire_indicator_key = tk.StringVar(value="INDICATOR")
         self.rotor_positions = tk.StringVar(value="ABC")
+        self.plugboard_pairs = tk.StringVar(value="")
+        self.enigma_rotors = tk.StringVar(value="I II III")
+        self.enigma_ring_settings = tk.StringVar(value="AAA")
+        self.enigma_reflector = tk.StringVar(value="B")
         self.status = tk.StringVar(value="Choose a file to begin.")
         self.cipher_vars = {name: tk.BooleanVar(value=name in DEFAULT_CIPHER_ORDER) for name in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS}
 
@@ -718,11 +984,16 @@ class FileEncryptionApp(tk.Tk):
             ("quagmire_indicator_key", "Quagmire indicator key (I-IV)", ttk.Entry(params_frame, textvariable=self.quagmire_indicator_key)),
             ("shift", "Shift (Caesar, Keyed Caesar, Progressive Caesar)", ttk.Spinbox(params_frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10)),
             ("rotor_positions", "Rotor positions (Enigma, Red, Purple, Green)", ttk.Entry(params_frame, textvariable=self.rotor_positions)),
+            ("plugboard_pairs", "Plugboard pairs (Enigma only, e.g. AB CD)", ttk.Entry(params_frame, textvariable=self.plugboard_pairs)),
+            ("enigma_rotors", "Rotor order (Enigma only, e.g. I II III)", ttk.Entry(params_frame, textvariable=self.enigma_rotors)),
+            ("enigma_ring_settings", "Ring settings (Enigma/M4, e.g. AAA or AAAA)", ttk.Entry(params_frame, textvariable=self.enigma_ring_settings)),
+            ("enigma_reflector", "Reflector (Enigma/M4: B, C, B Thin, C Thin)", ttk.Entry(params_frame, textvariable=self.enigma_reflector)),
             ("affine_a", "Affine a (Affine only, coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
             ("affine_b", "Affine b (Affine only)", ttk.Spinbox(params_frame, from_=0, to=64, textvariable=self.affine_b, width=10)),
             ("step", "Progressive step (Progressive Caesar only)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.step, width=10)),
             ("gronsfeld_digits", "Gronsfeld digits (Gronsfeld only)", ttk.Entry(params_frame, textvariable=self.gronsfeld_digits)),
             ("rails", "Rail Fence rails (Rail Fence only)", ttk.Spinbox(params_frame, from_=2, to=20, textvariable=self.rails, width=10)),
+            ("rail_offset", "Rail Fence offset (Rail Fence only)", ttk.Spinbox(params_frame, from_=0, to=20, textvariable=self.rail_offset, width=10)),
         ]
         self.parameter_controls = []
         for index, (name, label, widget) in enumerate(fields):
@@ -797,13 +1068,18 @@ class FileEncryptionApp(tk.Tk):
                 "quagmire_plain_key": self.quagmire_plain_key.get().strip(),
                 "quagmire_cipher_key": self.quagmire_cipher_key.get().strip(),
                 "quagmire_indicator_key": self.quagmire_indicator_key.get().strip(),
-                "shift": str(int(self.shift.get())),
+                "shift": self.shift.get().strip(),
                 "rotor_positions": self.rotor_positions.get().strip(),
-                "affine_a": str(int(self.affine_a.get())),
-                "affine_b": str(int(self.affine_b.get())),
-                "step": str(int(self.step.get())),
+                "plugboard_pairs": self.plugboard_pairs.get().strip(),
+                "enigma_rotors": self.enigma_rotors.get().strip(),
+                "enigma_ring_settings": self.enigma_ring_settings.get().strip(),
+                "enigma_reflector": self.enigma_reflector.get().strip(),
+                "affine_a": self.affine_a.get().strip(),
+                "affine_b": self.affine_b.get().strip(),
+                "step": self.step.get().strip(),
                 "gronsfeld_digits": self.gronsfeld_digits.get().strip(),
-                "rails": str(int(self.rails.get())),
+                "rails": self.rails.get().strip(),
+                "rail_offset": self.rail_offset.get().strip(),
             }
             validate_params(ciphers, params)
             text_file_version = base64.b64encode(source.read_bytes()).decode("ascii")
