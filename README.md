@@ -21,7 +21,8 @@ python file_encryptor_gui.py
 1. Choose the file to encrypt.
 2. Select the cipher stack to apply.
 3. Pick or keep the generated parameters. Parameter fields appear only when
-   at least one selected cipher needs them, so cipher-specific values are less
+   at least one selected cipher needs them, including separate Quagmire
+   plaintext, ciphertext, and indicator keys, so cipher-specific values are less
    likely to be confused.
 4. Save the generated `*_encrypted_decryptor.py` script.
 5. Keep the chosen parameters somewhere safe. The generated script asks for the

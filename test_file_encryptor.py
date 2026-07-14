@@ -18,6 +18,9 @@ from file_encryptor_gui import (
 
 PARAMS = {
     "key": "SecretKey9",
+    "quagmire_plain_key": "PlainKey",
+    "quagmire_cipher_key": "CipherKey",
+    "quagmire_indicator_key": "Indicator",
     "shift": "7",
     "rotor_positions": "ABC",
     "affine_a": "2",
@@ -47,7 +50,7 @@ class FileEncryptorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             script_path = Path(directory) / "decryptor.py"
             script_path.write_text(script, encoding="utf-8")
-            user_input = "SecretKey9\n7\nABC\n2\n7\n3\nout.bin\n"
+            user_input = "PlainKey\nCipherKey\nIndicator\nSecretKey9\n7\nABC\n2\n7\n3\nout.bin\n"
             result = subprocess.run(
                 [sys.executable, str(script_path)],
                 input=user_input,
@@ -66,6 +69,13 @@ class FileEncryptorTests(unittest.TestCase):
     def test_select_all_safe_stack_has_at_most_one_expander(self):
         safe_stack = [cipher for cipher in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS if cipher not in EXPANDING_CIPHERS]
         self.assertFalse([cipher for cipher in safe_stack if cipher in EXPANDING_CIPHERS])
+
+    def test_quagmire_iv_uses_separate_settings(self):
+        text = "abcdEFGH123+/="
+        encrypted = apply_cipher(text, "Quagmire IV", PARAMS, decrypt=False)
+        changed_params = PARAMS | {"quagmire_cipher_key": "Different"}
+        self.assertNotEqual(apply_cipher(text, "Quagmire IV", changed_params, decrypt=False), encrypted)
+        self.assertEqual(apply_cipher(encrypted, "Quagmire IV", PARAMS, decrypt=True), text)
 
     def test_validation_rejects_bad_affine_multiplier(self):
         bad_params = PARAMS | {"affine_a": "5"}

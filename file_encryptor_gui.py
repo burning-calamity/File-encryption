@@ -68,10 +68,6 @@ EXPANDING_CIPHERS = {
 }
 KEYWORD_CIPHERS = {
     "Vigenere",
-    "Quagmire I",
-    "Quagmire II",
-    "Quagmire III",
-    "Quagmire IV",
     "Keyed Caesar",
     "Beaufort",
     "Autokey",
@@ -100,7 +96,7 @@ EXPANDING_CIPHERS = {
     "Octal",
     "Decimal ASCII",
 }
-KEYWORD_CIPHERS = {"Vigenere", "Quagmire I", "Quagmire II", "Quagmire III", "Quagmire IV", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "XOR Stream", "RC4 Stream"}
+KEYWORD_CIPHERS = {"Vigenere", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "XOR Stream", "RC4 Stream"}
 
 
 def normalized_alphabet(seed: str, alphabet: str = ALPHABET) -> str:
@@ -411,11 +407,18 @@ def decimal_ascii(text: str, decrypt: bool = False) -> str:
     return "".join(chr(int(chunk)) for chunk in chunks)
 
 
-def quagmire(text: str, key: str, variant: int, decrypt: bool = False) -> str:
-    plain = normalized_alphabet(key if variant in {1, 3} else "")
-    cipher = normalized_alphabet(key[::-1] if variant in {2, 3, 4} else "")
-    indicator = normalized_alphabet(key if variant == 4 else key[::-1])
-    shifts = key_indexes(key, indicator)
+def quagmire(
+    text: str,
+    variant: int,
+    plain_key: str,
+    cipher_key: str,
+    indicator_key: str,
+    decrypt: bool = False,
+) -> str:
+    plain = normalized_alphabet(plain_key if variant in {1, 3, 4} else "")
+    cipher = normalized_alphabet(cipher_key if variant in {2, 3, 4} else "")
+    indicator = normalized_alphabet(indicator_key)
+    shifts = key_indexes(indicator_key, indicator)
     out = []
     position = 0
     for char in text:
@@ -451,7 +454,14 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher == "Atbash":
         return atbash(text)
     if cipher.startswith("Quagmire"):
-        return quagmire(text, params["key"], {"Quagmire I": 1, "Quagmire II": 2, "Quagmire III": 3, "Quagmire IV": 4}[cipher], decrypt)
+        return quagmire(
+            text,
+            {"Quagmire I": 1, "Quagmire II": 2, "Quagmire III": 3, "Quagmire IV": 4}[cipher],
+            params.get("quagmire_plain_key", ""),
+            params.get("quagmire_cipher_key", ""),
+            params["quagmire_indicator_key"],
+            decrypt,
+        )
     if cipher in MACHINE_CIPHERS:
         return rotor_machine(text, params["key"], params["rotor_positions"], cipher, decrypt)
     if cipher == "ROT47":
@@ -519,6 +529,15 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
             "Select at most one text-expanding cipher at a time to avoid huge payloads: "
             + ", ".join(selected_expanders)
         )
+    quagmire_ciphers = [cipher for cipher in ciphers if cipher.startswith("Quagmire")]
+    if quagmire_ciphers:
+        if not params.get("quagmire_indicator_key"):
+            raise ValueError("Quagmire ciphers require an indicator key.")
+        key_indexes(params["quagmire_indicator_key"])
+        if any(cipher in {"Quagmire I", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
+            key_indexes(params.get("quagmire_plain_key", ""))
+        if any(cipher in {"Quagmire II", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
+            key_indexes(params.get("quagmire_cipher_key", ""))
     if any(cipher in KEYWORD_CIPHERS or cipher in MACHINE_CIPHERS for cipher in ciphers):
         if not params.get("key"):
             raise ValueError("A shared keyword/key is required for the selected ciphers.")
@@ -537,6 +556,13 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
 
 def required_parameter_names(ciphers: list[str]) -> list[str]:
     names: list[str] = []
+    quagmire_ciphers = [cipher for cipher in ciphers if cipher.startswith("Quagmire")]
+    if quagmire_ciphers:
+        if any(cipher in {"Quagmire I", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
+            names.append("quagmire_plain_key")
+        if any(cipher in {"Quagmire II", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
+            names.append("quagmire_cipher_key")
+        names.append("quagmire_indicator_key")
     if any(cipher in KEYWORD_CIPHERS or cipher in MACHINE_CIPHERS for cipher in ciphers):
         names.append("key")
     if any(cipher in {"Caesar", "Keyed Caesar", "Progressive Caesar"} for cipher in ciphers):
@@ -573,6 +599,9 @@ def main() -> None:
     params = {{}}
     prompts = {{
         "key": "Shared cipher keyword/key used by the encrypter: ",
+        "quagmire_plain_key": "Quagmire plaintext alphabet key used by the encrypter: ",
+        "quagmire_cipher_key": "Quagmire ciphertext alphabet key used by the encrypter: ",
+        "quagmire_indicator_key": "Quagmire indicator key used by the encrypter: ",
         "shift": "Caesar/keyed shift used by the encrypter: ",
         "rotor_positions": "Rotor positions used by the encrypter: ",
         "affine_a": "Affine multiplier a used by the encrypter: ",
@@ -613,6 +642,9 @@ class FileEncryptionApp(tk.Tk):
         self.affine_a = tk.IntVar(value=2)
         self.affine_b = tk.IntVar(value=7)
         self.cipher_key = tk.StringVar(value=secrets.token_urlsafe(12).replace("-", "A").replace("_", "B"))
+        self.quagmire_plain_key = tk.StringVar(value="PLAINTEXT")
+        self.quagmire_cipher_key = tk.StringVar(value="CIPHERTEXT")
+        self.quagmire_indicator_key = tk.StringVar(value="INDICATOR")
         self.rotor_positions = tk.StringVar(value="ABC")
         self.status = tk.StringVar(value="Choose a file to begin.")
         self.cipher_vars = {name: tk.BooleanVar(value=name in DEFAULT_CIPHER_ORDER) for name in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS}
@@ -680,7 +712,10 @@ class FileEncryptionApp(tk.Tk):
         content.add(params_frame, weight=2)
 
         fields = [
-            ("key", "Keyword/key (Vigenere, Quagmire, rotor, keyed, stream)", ttk.Entry(params_frame, textvariable=self.cipher_key)),
+            ("key", "Shared key (Vigenere, rotor, keyed, stream)", ttk.Entry(params_frame, textvariable=self.cipher_key)),
+            ("quagmire_plain_key", "Quagmire plaintext key (I, III, IV)", ttk.Entry(params_frame, textvariable=self.quagmire_plain_key)),
+            ("quagmire_cipher_key", "Quagmire ciphertext key (II, III, IV)", ttk.Entry(params_frame, textvariable=self.quagmire_cipher_key)),
+            ("quagmire_indicator_key", "Quagmire indicator key (I-IV)", ttk.Entry(params_frame, textvariable=self.quagmire_indicator_key)),
             ("shift", "Shift (Caesar, Keyed Caesar, Progressive Caesar)", ttk.Spinbox(params_frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10)),
             ("rotor_positions", "Rotor positions (Enigma, Red, Purple, Green)", ttk.Entry(params_frame, textvariable=self.rotor_positions)),
             ("affine_a", "Affine a (Affine only, coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
@@ -759,6 +794,9 @@ class FileEncryptionApp(tk.Tk):
                 raise ValueError("Select at least one cipher.")
             params = {
                 "key": self.cipher_key.get().strip(),
+                "quagmire_plain_key": self.quagmire_plain_key.get().strip(),
+                "quagmire_cipher_key": self.quagmire_cipher_key.get().strip(),
+                "quagmire_indicator_key": self.quagmire_indicator_key.get().strip(),
                 "shift": str(int(self.shift.get())),
                 "rotor_positions": self.rotor_positions.get().strip(),
                 "affine_a": str(int(self.affine_a.get())),
