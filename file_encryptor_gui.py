@@ -43,6 +43,9 @@ EXTRA_CIPHERS = [
     "Columnar Transposition",
     "Bifid",
     "Trifid",
+    "Porta",
+    "Trithemius",
+    "Alberti",
     "Reverse",
     "Binary",
     "Baconian",
@@ -74,6 +77,8 @@ KEYWORD_CIPHERS = {
     "Beaufort",
     "Autokey",
     "Columnar Transposition",
+    "Porta",
+    "Alberti",
     "XOR Stream",
     "RC4 Stream",
 }
@@ -98,7 +103,7 @@ EXPANDING_CIPHERS = {
     "Octal",
     "Decimal ASCII",
 }
-KEYWORD_CIPHERS = {"Vigenere", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "XOR Stream", "RC4 Stream"}
+KEYWORD_CIPHERS = {"Vigenere", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "Porta", "Alberti", "XOR Stream", "RC4 Stream"}
 
 
 def normalized_alphabet(seed: str, alphabet: str = ALPHABET) -> str:
@@ -415,6 +420,60 @@ def trifid(text: str, decrypt: bool = False) -> str:
     return _replace_grid_chars(text, transformed, grid)
 
 
+def porta(text: str, key: str) -> str:
+    shifts = [(ord(char.upper()) - ord("A")) // 2 for char in key if char.isalpha()]
+    if not shifts:
+        raise ValueError("Porta requires at least one letter in the key.")
+    out = []
+    key_position = 0
+    for char in text:
+        if not char.isalpha():
+            out.append(char)
+            continue
+        base = ord("A") if char.isupper() else ord("a")
+        value = ord(char) - base
+        shift = shifts[key_position % len(shifts)]
+        if value < 13:
+            mapped = 13 + ((value + shift) % 13)
+        else:
+            mapped = (value - 13 - shift) % 13
+        out.append(chr(base + mapped))
+        key_position += 1
+    return "".join(out)
+
+
+def trithemius(text: str, decrypt: bool = False) -> str:
+    out = []
+    position = 0
+    for char in text:
+        if not char.isalpha():
+            out.append(char)
+            continue
+        shift = position if not decrypt else -position
+        out.append(shift_letter(char, shift))
+        position += 1
+    return "".join(out)
+
+
+def alberti(text: str, key: str, decrypt: bool = False) -> str:
+    inner = normalized_alphabet(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    outer = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    out = []
+    position = 0
+    for char in text:
+        if not char.isalpha():
+            out.append(char)
+            continue
+        rotate = position % 26
+        rotated_inner = inner[rotate:] + inner[:rotate]
+        source, target = (rotated_inner, outer) if decrypt else (outer, rotated_inner)
+        upper = char.upper()
+        mapped = target[source.index(upper)]
+        out.append(mapped if char.isupper() else mapped.lower())
+        position += 1
+    return "".join(out)
+
+
 def reverse_text(text: str) -> str:
     return text[::-1]
 
@@ -493,14 +552,27 @@ def rc4_stream(text: str, key: str, decrypt: bool = False) -> str:
 
 def adfgvx(text: str, decrypt: bool = False) -> str:
     symbols = "ADFGVX"
+    width = 8
     if not decrypt:
         encoded = []
         for char in text:
             value = ord(char)
-            encoded.append(symbols[value // 36] + symbols[(value // 6) % 6] + symbols[value % 6])
+            digits = []
+            for _ in range(width):
+                digits.append(symbols[value % 6])
+                value //= 6
+            encoded.append("".join(reversed(digits)))
         return " ".join(encoded)
     chunks = [chunk for chunk in text.split(" ") if chunk]
-    return "".join(chr(symbols.index(chunk[0]) * 36 + symbols.index(chunk[1]) * 6 + symbols.index(chunk[2])) for chunk in chunks)
+    out = []
+    for chunk in chunks:
+        if len(chunk) != width or any(char not in symbols for char in chunk):
+            raise ValueError("ADFGVX chunks must be 8 symbols drawn from ADFGVX.")
+        value = 0
+        for char in chunk:
+            value = value * 6 + symbols.index(char)
+        out.append(chr(value))
+    return "".join(out)
 
 
 def octal_text(text: str, decrypt: bool = False) -> str:
@@ -778,6 +850,12 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
         return bifid(text, decrypt)
     if cipher == "Trifid":
         return trifid(text, decrypt)
+    if cipher == "Porta":
+        return porta(text, params["key"])
+    if cipher == "Trithemius":
+        return trithemius(text, decrypt)
+    if cipher == "Alberti":
+        return alberti(text, params["key"], decrypt)
     if cipher == "Reverse":
         return reverse_text(text)
     if cipher == "Binary":

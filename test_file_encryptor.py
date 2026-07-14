@@ -100,6 +100,14 @@ class FileEncryptorTests(unittest.TestCase):
         encrypted = apply_cipher(text, "Trifid", PARAMS, decrypt=False)
         self.assertEqual(apply_cipher(encrypted, "Trifid", PARAMS, decrypt=True), text)
 
+    def test_adfgvx_handles_unicode_from_trifid(self):
+        text = "AAU="
+        trifid_text = apply_cipher(text, "Trifid", PARAMS, decrypt=False)
+        encrypted = apply_cipher(trifid_text, "ADFGVX", PARAMS, decrypt=False)
+        decoded = apply_cipher(encrypted, "ADFGVX", PARAMS, decrypt=True)
+        self.assertEqual(decoded, trifid_text)
+        self.assertEqual(apply_cipher(decoded, "Trifid", PARAMS, decrypt=True), text)
+
     def test_enigma_plugboard_affects_encryption_and_round_trips(self):
         text = "abcdEFGH123+/="
         no_plugboard = PARAMS | {"plugboard_pairs": ""}

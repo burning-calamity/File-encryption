@@ -11,7 +11,8 @@ with M3/M4 rotor support, plugboard, rotor order, ring settings, and reflectors,
 Red/Purple/Green rotor-machine-style ciphers, with Purple switch/alphabet
 settings following the gremmie/purple syntax, ROT47, Affine, Keyed Caesar,
 Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence with starting
-offset, Columnar Transposition, Bifid, Trifid, Reverse, Binary, Baconian, Hex,
+offset, Columnar Transposition, Bifid, Trifid, Porta, Trithemius, Alberti,
+Reverse, Binary, Baconian, Hex,
 Polybius Square, Morse Code, XOR Stream, RC4 Stream, ADFGVX, Octal, and
 Decimal ASCII.
 
