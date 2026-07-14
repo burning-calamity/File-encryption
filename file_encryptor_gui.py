@@ -46,6 +46,12 @@ EXTRA_CIPHERS = [
     "Baconian",
     "Hex",
     "Polybius Square",
+    "Morse Code",
+    "XOR Stream",
+    "RC4 Stream",
+    "ADFGVX",
+    "Octal",
+    "Decimal ASCII",
 ]
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
 KEYWORD_CIPHERS = {
@@ -58,6 +64,8 @@ KEYWORD_CIPHERS = {
     "Beaufort",
     "Autokey",
     "Columnar Transposition",
+    "XOR Stream",
+    "RC4 Stream",
 }
 
 
@@ -68,7 +76,7 @@ from pathlib import Path
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
-KEYWORD_CIPHERS = {"Vigenere", "Quagmire I", "Quagmire II", "Quagmire III", "Quagmire IV", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition"}
+KEYWORD_CIPHERS = {"Vigenere", "Quagmire I", "Quagmire II", "Quagmire III", "Quagmire IV", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "XOR Stream", "RC4 Stream"}
 
 
 def normalized_alphabet(seed: str, alphabet: str = ALPHABET) -> str:
@@ -309,6 +317,76 @@ def polybius_square(text: str, decrypt: bool = False) -> str:
     return "".join(chr(int(chunk[:2]) * 16 + int(chunk[2:])) for chunk in chunks)
 
 
+def morse_code(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return " / ".join(format(ord(char), "08b").replace("0", ".").replace("1", "-") for char in text)
+    chunks = [chunk for chunk in text.split(" / ") if chunk]
+    return "".join(chr(int(chunk.replace(".", "0").replace("-", "1"), 2)) for chunk in chunks)
+
+
+def xor_stream(text: str, key: str, decrypt: bool = False) -> str:
+    key_values = [ord(char) for char in key]
+    if not key_values:
+        raise ValueError("XOR Stream requires a non-empty key.")
+    if not decrypt:
+        return " ".join(format(ord(char) ^ key_values[index % len(key_values)], "02x") for index, char in enumerate(text))
+    chunks = [chunk for chunk in text.split(" ") if chunk]
+    return "".join(chr(int(chunk, 16) ^ key_values[index % len(key_values)]) for index, chunk in enumerate(chunks))
+
+
+def rc4_stream(text: str, key: str, decrypt: bool = False) -> str:
+    key_bytes = [ord(char) for char in key]
+    if not key_bytes:
+        raise ValueError("RC4 Stream requires a non-empty key.")
+
+    state = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + state[i] + key_bytes[i % len(key_bytes)]) % 256
+        state[i], state[j] = state[j], state[i]
+
+    def keystream():
+        i = 0
+        j = 0
+        while True:
+            i = (i + 1) % 256
+            j = (j + state[i]) % 256
+            state[i], state[j] = state[j], state[i]
+            yield state[(state[i] + state[j]) % 256]
+
+    stream = keystream()
+    if not decrypt:
+        return " ".join(format(ord(char) ^ next(stream), "02x") for char in text)
+    chunks = [chunk for chunk in text.split(" ") if chunk]
+    return "".join(chr(int(chunk, 16) ^ next(stream)) for chunk in chunks)
+
+
+def adfgvx(text: str, decrypt: bool = False) -> str:
+    symbols = "ADFGVX"
+    if not decrypt:
+        encoded = []
+        for char in text:
+            value = ord(char)
+            encoded.append(symbols[value // 36] + symbols[(value // 6) % 6] + symbols[value % 6])
+        return " ".join(encoded)
+    chunks = [chunk for chunk in text.split(" ") if chunk]
+    return "".join(chr(symbols.index(chunk[0]) * 36 + symbols.index(chunk[1]) * 6 + symbols.index(chunk[2])) for chunk in chunks)
+
+
+def octal_text(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return " ".join(format(ord(char), "03o") for char in text)
+    chunks = [chunk for chunk in text.split(" ") if chunk]
+    return "".join(chr(int(chunk, 8)) for chunk in chunks)
+
+
+def decimal_ascii(text: str, decrypt: bool = False) -> str:
+    if not decrypt:
+        return " ".join(str(ord(char)).zfill(3) for char in text)
+    chunks = [chunk for chunk in text.split(" ") if chunk]
+    return "".join(chr(int(chunk)) for chunk in chunks)
+
+
 def quagmire(text: str, key: str, variant: int, decrypt: bool = False) -> str:
     plain = normalized_alphabet(key if variant in {1, 3} else "")
     cipher = normalized_alphabet(key[::-1] if variant in {2, 3, 4} else "")
@@ -380,6 +458,18 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
         return hex_text(text, decrypt)
     if cipher == "Polybius Square":
         return polybius_square(text, decrypt)
+    if cipher == "Morse Code":
+        return morse_code(text, decrypt)
+    if cipher == "XOR Stream":
+        return xor_stream(text, params["key"], decrypt)
+    if cipher == "RC4 Stream":
+        return rc4_stream(text, params["key"], decrypt)
+    if cipher == "ADFGVX":
+        return adfgvx(text, decrypt)
+    if cipher == "Octal":
+        return octal_text(text, decrypt)
+    if cipher == "Decimal ASCII":
+        return decimal_ascii(text, decrypt)
     raise ValueError(f"unknown cipher: {cipher}")
 
 
@@ -409,7 +499,9 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
         raise ValueError("Rail Fence rails must be at least 2.")
     if "Affine" in ciphers:
         a = int(params["affine_a"])
-        if affine("a", a, int(params["affine_b"]), decrypt=True) != "a":
+        b = int(params["affine_b"])
+        sample = "aZ9+="
+        if affine(affine(sample, a, b), a, b, decrypt=True) != sample:
             raise ValueError("Affine parameters failed validation.")
 
 

@@ -9,7 +9,8 @@ The cipher list is inspired by the
 project and includes Caesar, Vigenere, Atbash, Quagmire I-IV, Enigma-style,
 Red/Purple/Green rotor-machine-style ciphers, ROT47, Affine, Keyed Caesar,
 Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence, Columnar
-Transposition, Reverse, Binary, Baconian, Hex, and Polybius Square.
+Transposition, Reverse, Binary, Baconian, Hex, Polybius Square, Morse Code,
+XOR Stream, RC4 Stream, ADFGVX, Octal, and Decimal ASCII.
 
 ## Usage
 
@@ -36,5 +37,5 @@ python -m unittest -v
 ```
 
 The included tests verify every cipher can round-trip text, the generated
-decryptor can restore a payload with the full cipher stack, and invalid Affine
+decryptor can restore a payload with a representative layered cipher stack, and invalid Affine
 parameters are rejected before a decryptor is created.
