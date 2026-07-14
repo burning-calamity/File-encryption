@@ -90,6 +90,19 @@ class FileEncryptorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(directory) / "out.bin").read_bytes(), payload)
 
+
+    def test_web_encryptor_page_contains_runtime_and_controls(self):
+        html = Path("file_encryptor_web.html").read_text(encoding="utf-8")
+        for expected in [
+            "File Encryption Web Builder",
+            "Preview source",
+            "Preview encrypted text",
+            "Download standalone HTML decryptor",
+            "function encryptWithCiphers",
+            "function decryptWithCiphers",
+        ]:
+            self.assertIn(expected, html)
+
     def test_preview_helpers_detect_text_binary_and_wav(self):
         text, truncated = decode_text_preview(b"hello\nworld")
         self.assertEqual(text, "hello\nworld")

@@ -42,6 +42,17 @@ The generated decryptor embeds the encrypted text payload and the original file
 extension, then asks where to write the decrypted output.
 
 
+## Browser version
+
+Open `file_encryptor_web.html` in a modern browser to run a client-side version
+of the encryptor. It can preview source files, preview encrypted text, and
+download a standalone HTML decryptor. All file bytes stay in the browser; no
+server is required. The browser version currently implements the web-safe cipher
+set shown in the page, including Caesar, Vigenere, Atbash, ROT47, Affine, Keyed
+Caesar, Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence, Columnar
+Transposition, Reverse, Binary, Hex, Octal, Decimal ASCII, XOR Stream, and RC4
+Stream. Use the Python GUI when you need the full historical cipher set.
+
 ## Payload-size safety
 
 Some ciphers in the list expand text substantially (for example Binary,
