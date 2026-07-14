@@ -50,8 +50,10 @@ download a standalone HTML decryptor. All file bytes stay in the browser; no
 server is required. The browser version currently implements the web-safe cipher
 set shown in the page, including Caesar, Vigenere, Atbash, ROT47, Affine, Keyed
 Caesar, Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence, Columnar
-Transposition, Reverse, Binary, Hex, Octal, Decimal ASCII, XOR Stream, and RC4
-Stream. Use the Python GUI when you need the full historical cipher set.
+Transposition, Bifid, Trifid, Porta, Trithemius, Alberti, Reverse, Binary,
+Baconian, Hex, Polybius Square, Morse Code, ADFGVX, Octal, Decimal ASCII, XOR
+Stream, and RC4 Stream. Use the Python GUI when you need Enigma, Purple,
+Red/Green rotor-style ciphers, or Quagmire variants.
 
 ## Payload-size safety
 

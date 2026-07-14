@@ -100,8 +100,18 @@ class FileEncryptorTests(unittest.TestCase):
             "Download standalone HTML decryptor",
             "function encryptWithCiphers",
             "function decryptWithCiphers",
+            "Bifid",
+            "ADFGVX",
+            "CUSTOM_INDEX_CACHE",
         ]:
             self.assertIn(expected, html)
+
+
+    def test_web_encryptor_validates_affine_coprime_check(self):
+        html = Path("file_encryptor_web.html").read_text(encoding="utf-8")
+        self.assertIn("function gcd", html)
+        self.assertIn('ciphers.includes("Affine")', html)
+        self.assertIn("not coprime", html)
 
     def test_preview_helpers_detect_text_binary_and_wav(self):
         text, truncated = decode_text_preview(b"hello\nworld")
