@@ -571,8 +571,9 @@ class FileEncryptionApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("File Encryption Script Builder")
-        self.geometry("820x680")
-        self.resizable(False, False)
+        self.geometry("900x720")
+        self.minsize(760, 560)
+        self.resizable(True, True)
 
         self.file_path = tk.StringVar()
         self.shift = tk.IntVar(value=secrets.randbelow(len(ALPHABET) - 1) + 1)
@@ -589,39 +590,90 @@ class FileEncryptionApp(tk.Tk):
         self._build_widgets()
 
     def _build_widgets(self) -> None:
-        padding = {"padx": 12, "pady": 8}
-        frame = ttk.Frame(self)
-        frame.pack(fill="both", expand=True, **padding)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        ttk.Label(frame, text="Source file").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.file_path, width=78).grid(row=1, column=0, columnspan=3, sticky="ew")
-        ttk.Button(frame, text="Browse...", command=self.choose_file).grid(row=1, column=3, padx=(8, 0))
+        root = ttk.Frame(self, padding=12)
+        root.grid(row=0, column=0, sticky="nsew")
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
 
-        ttk.Label(frame, text="Cipher stack (applied top-to-bottom, decrypted in reverse)").grid(row=2, column=0, columnspan=4, sticky="w", pady=(14, 0))
+        file_frame = ttk.LabelFrame(root, text="Source file")
+        file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        file_frame.columnconfigure(0, weight=1)
+        ttk.Entry(file_frame, textvariable=self.file_path).grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=10)
+        ttk.Button(file_frame, text="Browse...", command=self.choose_file).grid(row=0, column=1, sticky="e", padx=(0, 10), pady=10)
+
+        content = ttk.PanedWindow(root, orient="vertical")
+        content.grid(row=1, column=0, sticky="nsew")
+
+        cipher_frame = ttk.LabelFrame(content, text="Cipher stack (applied top-to-bottom, decrypted in reverse)")
+        cipher_frame.columnconfigure(0, weight=1)
+        cipher_frame.rowconfigure(1, weight=1)
+        content.add(cipher_frame, weight=3)
+
+        toolbar = ttk.Frame(cipher_frame)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
+        toolbar.columnconfigure(2, weight=1)
+        ttk.Button(toolbar, text="Select defaults", command=lambda: self._set_all_ciphers(False, defaults=True)).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(toolbar, text="Select all", command=lambda: self._set_all_ciphers(True)).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(toolbar, text="Clear all", command=lambda: self._set_all_ciphers(False)).grid(row=0, column=2, sticky="w")
+
+        canvas = tk.Canvas(cipher_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(cipher_frame, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        scroll_window = canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=1, column=0, sticky="nsew", padx=(10, 0), pady=(0, 10))
+        scrollbar.grid(row=1, column=1, sticky="ns", padx=(0, 10), pady=(0, 10))
+
+        def update_scroll_region(_event: tk.Event | None = None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def resize_scroll_frame(event: tk.Event) -> None:
+            canvas.itemconfigure(scroll_window, width=event.width)
+
+        scroll_frame.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", resize_scroll_frame)
+
+        for column in range(4):
+            scroll_frame.columnconfigure(column, weight=1, uniform="cipher")
         for index, cipher in enumerate(DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS):
-            ttk.Checkbutton(frame, text=cipher, variable=self.cipher_vars[cipher]).grid(row=3 + index // 3, column=index % 3, sticky="w")
+            row, column = divmod(index, 4)
+            ttk.Checkbutton(scroll_frame, text=cipher, variable=self.cipher_vars[cipher]).grid(
+                row=row, column=column, sticky="w", padx=8, pady=3
+            )
 
-        parameter_row = 9
-        ttk.Label(frame, text="Shared keyword/key").grid(row=parameter_row, column=0, sticky="w", pady=(18, 0))
-        ttk.Entry(frame, textvariable=self.cipher_key, width=36).grid(row=parameter_row + 1, column=0, sticky="w")
-        ttk.Label(frame, text="Shift").grid(row=parameter_row, column=1, sticky="w", pady=(18, 0))
-        ttk.Spinbox(frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10).grid(row=parameter_row + 1, column=1, sticky="w")
-        ttk.Label(frame, text="Rotor positions").grid(row=parameter_row, column=2, sticky="w", pady=(18, 0))
-        ttk.Entry(frame, textvariable=self.rotor_positions, width=18).grid(row=parameter_row + 1, column=2, sticky="w")
+        params_frame = ttk.LabelFrame(content, text="Encryption parameters")
+        for column in range(4):
+            params_frame.columnconfigure(column, weight=1, uniform="params")
+        content.add(params_frame, weight=2)
 
-        ttk.Label(frame, text="Affine a (coprime with 65)").grid(row=parameter_row + 2, column=0, sticky="w", pady=(12, 0))
-        ttk.Spinbox(frame, from_=1, to=64, textvariable=self.affine_a, width=10).grid(row=parameter_row + 3, column=0, sticky="w")
-        ttk.Label(frame, text="Affine b").grid(row=parameter_row + 2, column=1, sticky="w", pady=(12, 0))
-        ttk.Spinbox(frame, from_=0, to=64, textvariable=self.affine_b, width=10).grid(row=parameter_row + 3, column=1, sticky="w")
-        ttk.Label(frame, text="Progressive step").grid(row=parameter_row + 2, column=2, sticky="w", pady=(12, 0))
-        ttk.Spinbox(frame, from_=1, to=64, textvariable=self.step, width=10).grid(row=parameter_row + 3, column=2, sticky="w")
-        ttk.Label(frame, text="Gronsfeld digits").grid(row=parameter_row + 4, column=0, sticky="w", pady=(12, 0))
-        ttk.Entry(frame, textvariable=self.gronsfeld_digits, width=18).grid(row=parameter_row + 5, column=0, sticky="w")
-        ttk.Label(frame, text="Rail Fence rails").grid(row=parameter_row + 4, column=1, sticky="w", pady=(12, 0))
-        ttk.Spinbox(frame, from_=2, to=20, textvariable=self.rails, width=10).grid(row=parameter_row + 5, column=1, sticky="w")
+        fields = [
+            ("Shared keyword/key", ttk.Entry(params_frame, textvariable=self.cipher_key)),
+            ("Shift", ttk.Spinbox(params_frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10)),
+            ("Rotor positions", ttk.Entry(params_frame, textvariable=self.rotor_positions)),
+            ("Affine a (coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
+            ("Affine b", ttk.Spinbox(params_frame, from_=0, to=64, textvariable=self.affine_b, width=10)),
+            ("Progressive step", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.step, width=10)),
+            ("Gronsfeld digits", ttk.Entry(params_frame, textvariable=self.gronsfeld_digits)),
+            ("Rail Fence rails", ttk.Spinbox(params_frame, from_=2, to=20, textvariable=self.rails, width=10)),
+        ]
+        for index, (label, widget) in enumerate(fields):
+            row = (index // 4) * 2
+            column = index % 4
+            ttk.Label(params_frame, text=label).grid(row=row, column=column, sticky="w", padx=10, pady=(10, 2))
+            widget.grid(row=row + 1, column=column, sticky="ew", padx=10, pady=(0, 10))
 
-        ttk.Button(frame, text="Create encrypted decryptor script", command=self.create_script).grid(row=parameter_row + 6, column=0, sticky="w", pady=(22, 0))
-        ttk.Label(frame, textvariable=self.status, wraplength=760).grid(row=parameter_row + 7, column=0, columnspan=4, sticky="w", pady=(18, 0))
+        action_frame = ttk.Frame(root)
+        action_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        action_frame.columnconfigure(1, weight=1)
+        ttk.Button(action_frame, text="Create encrypted decryptor script", command=self.create_script).grid(row=0, column=0, sticky="w")
+        ttk.Label(action_frame, textvariable=self.status, wraplength=680).grid(row=0, column=1, sticky="ew", padx=(12, 0))
+
+    def _set_all_ciphers(self, value: bool, defaults: bool = False) -> None:
+        for cipher, variable in self.cipher_vars.items():
+            variable.set(cipher in DEFAULT_CIPHER_ORDER if defaults else value)
 
     def choose_file(self) -> None:
         selected = filedialog.askopenfilename(title="Choose a file to encrypt")
