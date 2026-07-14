@@ -10,9 +10,11 @@ original extension and bytes.
 from __future__ import annotations
 
 import base64
+import io
 import json
 from pathlib import Path
 import secrets
+import wave
 import string
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -83,6 +85,82 @@ KEYWORD_CIPHERS = {
     "RC4 Stream",
 }
 
+TEXT_PREVIEW_LIMIT = 8_000
+ENCRYPTED_PREVIEW_LIMIT = 20_000
+
+
+def detect_preview_kind(data: bytes, path: Path | None = None) -> str:
+    """Return the best built-in preview type for file bytes."""
+    suffix = path.suffix.lower() if path else ""
+    if data.startswith((b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"\xff\xd8\xff", b"BM")):
+        return "image"
+    if (data.startswith(b"RIFF") and data[8:12] == b"WAVE") or suffix in {".wav", ".wave"}:
+        return "sound"
+    if decode_text_preview(data, limit=512)[0]:
+        return "text"
+    return "binary"
+
+
+def decode_text_preview(data: bytes, limit: int = TEXT_PREVIEW_LIMIT) -> tuple[str | None, bool]:
+    """Decode bytes for a safe text preview and report whether it was truncated."""
+    sample = data[:limit]
+    truncated = len(data) > limit
+    encodings = ["utf-8"]
+    if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.append("utf-16")
+    for encoding in encodings:
+        try:
+            text = sample.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if _looks_like_text(text):
+            return text, truncated
+    try:
+        text = sample.decode("latin-1")
+    except UnicodeDecodeError:
+        return None, truncated
+    return (text, truncated) if _looks_like_text(text) else (None, truncated)
+
+
+def _looks_like_text(text: str) -> bool:
+    if not text:
+        return True
+    printable = sum(1 for char in text if char.isprintable() or char in "\r\n\t")
+    return printable / len(text) >= 0.85
+
+
+def sound_preview_summary(data: bytes) -> str:
+    """Return metadata for supported audio previews."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as audio:
+            frames = audio.getnframes()
+            rate = audio.getframerate()
+            duration = frames / rate if rate else 0
+            return (
+                "WAV audio preview\n"
+                f"Channels: {audio.getnchannels()}\n"
+                f"Sample width: {audio.getsampwidth()} bytes\n"
+                f"Sample rate: {rate} Hz\n"
+                f"Frames: {frames}\n"
+                f"Duration: {duration:.2f} seconds\n\n"
+                "Playback is not built into this preview, but the file can be restored and opened in an audio player."
+            )
+    except wave.Error:
+        return "Audio-like file detected, but only WAV metadata preview is supported by the built-in viewer."
+
+
+def hex_preview(data: bytes, limit: int = 512) -> str:
+    sample = data[:limit]
+    lines = []
+    for offset in range(0, len(sample), 16):
+        chunk = sample[offset:offset + 16]
+        hex_values = " ".join(f"{byte:02x}" for byte in chunk)
+        ascii_values = "".join(chr(byte) if 32 <= byte <= 126 else "." for byte in chunk)
+        lines.append(f"{offset:08x}  {hex_values:<47}  {ascii_values}")
+    if len(data) > limit:
+        lines.append(f"... truncated after {limit} of {len(data)} bytes ...")
+    return "\n".join(lines)
+
 
 CIPHER_RUNTIME = r'''
 import base64
@@ -90,6 +168,8 @@ import json
 from pathlib import Path
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
+ALPHABET_INDEX = {char: index for index, char in enumerate(ALPHABET)}
+GRID_CACHE: dict[int, tuple[str, dict[str, int]]] = {}
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
 EXPANDING_CIPHERS = {
     "Binary",
@@ -116,16 +196,31 @@ def normalized_alphabet(seed: str, alphabet: str = ALPHABET) -> str:
     return "".join(seen)
 
 
+def alphabet_index_map(alphabet: str = ALPHABET) -> dict[str, int]:
+    if alphabet == ALPHABET:
+        return ALPHABET_INDEX
+    return {char: index for index, char in enumerate(alphabet)}
+
+
 def key_indexes(key: str, alphabet: str = ALPHABET) -> list[int]:
-    values = [alphabet.index(char) for char in key if char in alphabet]
+    index_map = alphabet_index_map(alphabet)
+    values = [index_map[char] for char in key if char in index_map]
     if not values:
         raise ValueError(f"key must contain at least one supported character from {alphabet!r}")
     return values
 
 
+def param_value(params: dict[str, str], name: str, fallback: str = "key") -> str:
+    return params.get(name) or params.get(fallback, "")
+
+
 def translate_alphabet(text: str, source: str, target: str) -> str:
     table = {src: dst for src, dst in zip(source, target)}
     return "".join(table.get(char, char) for char in text)
+
+
+def is_ascii_letter(char: str) -> bool:
+    return "A" <= char <= "Z" or "a" <= char <= "z"
 
 
 def shift_letter(char: str, shift: int) -> str:
@@ -137,7 +232,7 @@ def shift_letter(char: str, shift: int) -> str:
 
 
 def letter_key_shifts(key: str) -> list[int]:
-    shifts = [ord(char.upper()) - ord("A") for char in key if char.isalpha()]
+    shifts = [ord(char.upper()) - ord("A") for char in key if is_ascii_letter(char)]
     if not shifts:
         raise ValueError("key must contain at least one letter for this cipher")
     return shifts
@@ -152,16 +247,19 @@ def caesar(text: str, shift: int, decrypt: bool = False) -> str:
 def vigenere(text: str, key: str, decrypt: bool = False, alphabet: str = ALPHABET) -> str:
     if alphabet != ALPHABET:
         shifts = key_indexes(key, alphabet)
+        index_map = alphabet_index_map(alphabet)
         result = []
         key_position = 0
+        alphabet_size = len(alphabet)
         for char in text:
-            if char not in alphabet:
+            value = index_map.get(char)
+            if value is None:
                 result.append(char)
                 continue
             shift = shifts[key_position % len(shifts)]
             if decrypt:
                 shift = -shift
-            result.append(alphabet[(alphabet.index(char) + shift) % len(alphabet)])
+            result.append(alphabet[(value + shift) % alphabet_size])
             key_position += 1
         return "".join(result)
 
@@ -169,7 +267,7 @@ def vigenere(text: str, key: str, decrypt: bool = False, alphabet: str = ALPHABE
     result = []
     key_position = 0
     for char in text:
-        if not char.isalpha():
+        if not is_ascii_letter(char):
             result.append(char)
             continue
         shift = shifts[key_position % len(shifts)]
@@ -213,10 +311,10 @@ def affine(text: str, a: int, b: int, decrypt: bool = False) -> str:
     a_inverse = inverse(a, size) if decrypt else None
     out = []
     for char in text:
-        if char not in ALPHABET:
+        value = ALPHABET_INDEX.get(char)
+        if value is None:
             out.append(char)
             continue
-        value = ALPHABET.index(char)
         mapped = (a_inverse * (value - b)) % size if decrypt else (a * value + b) % size
         out.append(ALPHABET[mapped])
     return "".join(out)
@@ -233,12 +331,14 @@ def beaufort(text: str, key: str) -> str:
     shifts = key_indexes(key)
     out = []
     key_position = 0
+    alphabet_size = len(ALPHABET)
     for char in text:
-        if char not in ALPHABET:
+        value = ALPHABET_INDEX.get(char)
+        if value is None:
             out.append(char)
             continue
         shift = shifts[key_position % len(shifts)]
-        out.append(ALPHABET[(shift - ALPHABET.index(char)) % len(ALPHABET)])
+        out.append(ALPHABET[(shift - value) % alphabet_size])
         key_position += 1
     return "".join(out)
 
@@ -246,14 +346,16 @@ def beaufort(text: str, key: str) -> str:
 def progressive_caesar(text: str, start: int, step: int, decrypt: bool = False) -> str:
     out = []
     position = 0
+    alphabet_size = len(ALPHABET)
     for char in text:
-        if char not in ALPHABET:
+        value = ALPHABET_INDEX.get(char)
+        if value is None:
             out.append(char)
             continue
         shift = start + position * step
         if decrypt:
             shift = -shift
-        out.append(ALPHABET[(ALPHABET.index(char) + shift) % len(ALPHABET)])
+        out.append(ALPHABET[(value + shift) % alphabet_size])
         position += 1
     return "".join(out)
 
@@ -262,18 +364,19 @@ def autokey(text: str, key: str, decrypt: bool = False) -> str:
     stream = key_indexes(key)
     out = []
     stream_position = 0
+    alphabet_size = len(ALPHABET)
     for char in text:
-        if char not in ALPHABET:
+        value = ALPHABET_INDEX.get(char)
+        if value is None:
             out.append(char)
             continue
         shift = stream[stream_position]
-        value = ALPHABET.index(char)
         if decrypt:
-            plain_value = (value - shift) % len(ALPHABET)
+            plain_value = (value - shift) % alphabet_size
             out.append(ALPHABET[plain_value])
             stream.append(plain_value)
         else:
-            out.append(ALPHABET[(value + shift) % len(ALPHABET)])
+            out.append(ALPHABET[(value + shift) % alphabet_size])
             stream.append(value)
         stream_position += 1
     return "".join(out)
@@ -285,14 +388,16 @@ def gronsfeld(text: str, digits: str, decrypt: bool = False) -> str:
         raise ValueError("Gronsfeld digits must contain at least one number.")
     out = []
     position = 0
+    alphabet_size = len(ALPHABET)
     for char in text:
-        if char not in ALPHABET:
+        value = ALPHABET_INDEX.get(char)
+        if value is None:
             out.append(char)
             continue
         shift = shifts[position % len(shifts)]
         if decrypt:
             shift = -shift
-        out.append(ALPHABET[(ALPHABET.index(char) + shift) % len(ALPHABET)])
+        out.append(ALPHABET[(value + shift) % alphabet_size])
         position += 1
     return "".join(out)
 
@@ -350,15 +455,26 @@ def columnar_transposition(text: str, key: str, decrypt: bool = False) -> str:
 
 
 def _grid_alphabet(size: int) -> str:
+    cached = GRID_CACHE.get(size)
+    if cached is not None:
+        return cached[0]
     padding = "!#$%&()*,-.:;<>?@[]^_`{|}~" + "\u00a1\u00a2\u00a3\u00a4\u00a5\u00a6\u00a7\u00a8\u00a9\u00aa\u00ab\u00ac\u00ae\u00af"
     grid_chars = list(ALPHABET + "".join(char for char in padding if char not in ALPHABET))
     codepoint = 0x0100
+    grid_set = set(grid_chars)
     while len(grid_chars) < size:
         char = chr(codepoint)
-        if char not in grid_chars and char.isprintable():
+        if char not in grid_set and char.isprintable():
             grid_chars.append(char)
+            grid_set.add(char)
         codepoint += 1
-    return "".join(grid_chars[:size])
+    grid = "".join(grid_chars[:size])
+    GRID_CACHE[size] = (grid, {char: index for index, char in enumerate(grid)})
+    return grid
+
+
+def _grid_index_map(grid: str) -> dict[str, int]:
+    return GRID_CACHE[len(grid)][1]
 
 
 def _replace_grid_chars(text: str, transformed: str, grid: str) -> str:
@@ -369,18 +485,19 @@ def _replace_grid_chars(text: str, transformed: str, grid: str) -> str:
 def bifid(text: str, decrypt: bool = False) -> str:
     width = 9
     grid = _grid_alphabet(width * width)
-    supported = [char for char in text if char in grid]
+    grid_index = _grid_index_map(grid)
+    supported = [char for char in text if char in grid_index]
     if not supported:
         return text
     if not decrypt:
-        rows = [grid.index(char) // width for char in supported]
-        columns = [grid.index(char) % width for char in supported]
+        rows = [grid_index[char] // width for char in supported]
+        columns = [grid_index[char] % width for char in supported]
         merged = rows + columns
         transformed = "".join(grid[merged[index] * width + merged[index + 1]] for index in range(0, len(merged), 2))
         return _replace_grid_chars(text, transformed, grid)
     coords = []
     for char in supported:
-        value = grid.index(char)
+        value = grid_index[char]
         coords.extend([value // width, value % width])
     midpoint = len(coords) // 2
     transformed = "".join(grid[coords[index] * width + coords[midpoint + index]] for index in range(midpoint))
@@ -390,7 +507,8 @@ def bifid(text: str, decrypt: bool = False) -> str:
 def trifid(text: str, decrypt: bool = False) -> str:
     width = 5
     grid = _grid_alphabet(width ** 3)
-    supported = [char for char in text if char in grid]
+    grid_index = _grid_index_map(grid)
+    supported = [char for char in text if char in grid_index]
     if not supported:
         return text
     if not decrypt:
@@ -398,7 +516,7 @@ def trifid(text: str, decrypt: bool = False) -> str:
         rows = []
         columns = []
         for char in supported:
-            value = grid.index(char)
+            value = grid_index[char]
             layers.append(value // 25)
             rows.append((value // 5) % 5)
             columns.append(value % 5)
@@ -410,7 +528,7 @@ def trifid(text: str, decrypt: bool = False) -> str:
         return _replace_grid_chars(text, transformed, grid)
     coords = []
     for char in supported:
-        value = grid.index(char)
+        value = grid_index[char]
         coords.extend([value // 25, (value // 5) % 5, value % 5])
     third = len(coords) // 3
     transformed = "".join(
@@ -421,13 +539,13 @@ def trifid(text: str, decrypt: bool = False) -> str:
 
 
 def porta(text: str, key: str) -> str:
-    shifts = [(ord(char.upper()) - ord("A")) // 2 for char in key if char.isalpha()]
+    shifts = [(ord(char.upper()) - ord("A")) // 2 for char in key if is_ascii_letter(char)]
     if not shifts:
         raise ValueError("Porta requires at least one letter in the key.")
     out = []
     key_position = 0
     for char in text:
-        if not char.isalpha():
+        if not is_ascii_letter(char):
             out.append(char)
             continue
         base = ord("A") if char.isupper() else ord("a")
@@ -446,7 +564,7 @@ def trithemius(text: str, decrypt: bool = False) -> str:
     out = []
     position = 0
     for char in text:
-        if not char.isalpha():
+        if not is_ascii_letter(char):
             out.append(char)
             continue
         shift = position if not decrypt else -position
@@ -461,7 +579,7 @@ def alberti(text: str, key: str, decrypt: bool = False) -> str:
     out = []
     position = 0
     for char in text:
-        if not char.isalpha():
+        if not is_ascii_letter(char):
             out.append(char)
             continue
         rotate = position % 26
@@ -802,7 +920,7 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher == "Caesar":
         return caesar(text, int(params["shift"]), decrypt)
     if cipher == "Vigenere":
-        return vigenere(text, params["key"], decrypt)
+        return vigenere(text, param_value(params, "vigenere_key"), decrypt)
     if cipher == "Atbash":
         return atbash(text)
     if cipher.startswith("Quagmire"):
@@ -817,7 +935,7 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher in MACHINE_CIPHERS:
         return rotor_machine(
             text,
-            params["key"],
+            param_value(params, "rotor_key"),
             params["rotor_positions"],
             cipher,
             params.get("plugboard_pairs", ""),
@@ -833,29 +951,29 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher == "Affine":
         return affine(text, int(params["affine_a"]), int(params["affine_b"]), decrypt)
     if cipher == "Keyed Caesar":
-        return keyed_caesar(text, params["key"], int(params["shift"]), decrypt)
+        return keyed_caesar(text, param_value(params, "keyed_caesar_key"), int(params["shift"]), decrypt)
     if cipher == "Beaufort":
-        return beaufort(text, params["key"])
+        return beaufort(text, param_value(params, "beaufort_key"))
     if cipher == "Progressive Caesar":
         return progressive_caesar(text, int(params["shift"]), int(params["step"]), decrypt)
     if cipher == "Autokey":
-        return autokey(text, params["key"], decrypt)
+        return autokey(text, param_value(params, "autokey_key"), decrypt)
     if cipher == "Gronsfeld":
         return gronsfeld(text, params["gronsfeld_digits"], decrypt)
     if cipher == "Rail Fence":
         return rail_fence(text, int(params["rails"]), int(params.get("rail_offset", "0") or 0), decrypt)
     if cipher == "Columnar Transposition":
-        return columnar_transposition(text, params["key"], decrypt)
+        return columnar_transposition(text, param_value(params, "columnar_key"), decrypt)
     if cipher == "Bifid":
         return bifid(text, decrypt)
     if cipher == "Trifid":
         return trifid(text, decrypt)
     if cipher == "Porta":
-        return porta(text, params["key"])
+        return porta(text, param_value(params, "porta_key"))
     if cipher == "Trithemius":
         return trithemius(text, decrypt)
     if cipher == "Alberti":
-        return alberti(text, params["key"], decrypt)
+        return alberti(text, param_value(params, "alberti_key"), decrypt)
     if cipher == "Reverse":
         return reverse_text(text)
     if cipher == "Binary":
@@ -869,9 +987,9 @@ def apply_cipher(text: str, cipher: str, params: dict[str, str], decrypt: bool =
     if cipher == "Morse Code":
         return morse_code(text, decrypt)
     if cipher == "XOR Stream":
-        return xor_stream(text, params["key"], decrypt)
+        return xor_stream(text, param_value(params, "stream_key"), decrypt)
     if cipher == "RC4 Stream":
-        return rc4_stream(text, params["key"], decrypt)
+        return rc4_stream(text, param_value(params, "stream_key"), decrypt)
     if cipher == "ADFGVX":
         return adfgvx(text, decrypt)
     if cipher == "Octal":
@@ -912,10 +1030,22 @@ def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
             key_indexes(params.get("quagmire_plain_key", ""))
         if any(cipher in {"Quagmire II", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
             key_indexes(params.get("quagmire_cipher_key", ""))
-    if any(cipher in KEYWORD_CIPHERS or cipher in MACHINE_CIPHERS for cipher in ciphers):
-        if not params.get("key"):
-            raise ValueError("A shared keyword/key is required for the selected ciphers.")
-        key_indexes(params["key"])
+    key_requirements = {
+        "Vigenere": "vigenere_key",
+        "Keyed Caesar": "keyed_caesar_key",
+        "Beaufort": "beaufort_key",
+        "Autokey": "autokey_key",
+        "Columnar Transposition": "columnar_key",
+        "Porta": "porta_key",
+        "Alberti": "alberti_key",
+        "XOR Stream": "stream_key",
+        "RC4 Stream": "stream_key",
+        "Red": "rotor_key",
+        "Green": "rotor_key",
+    }
+    for cipher, key_name in key_requirements.items():
+        if cipher in ciphers:
+            key_indexes(param_value(params, key_name))
     if "Enigma" in ciphers:
         enigma_machine(
             "",
@@ -953,8 +1083,22 @@ def required_parameter_names(ciphers: list[str]) -> list[str]:
         if any(cipher in {"Quagmire II", "Quagmire III", "Quagmire IV"} for cipher in quagmire_ciphers):
             names.append("quagmire_cipher_key")
         names.append("quagmire_indicator_key")
-    if any(cipher in KEYWORD_CIPHERS or cipher in MACHINE_CIPHERS for cipher in ciphers):
-        names.append("key")
+    key_requirements = [
+        ("Vigenere", "vigenere_key"),
+        ("Keyed Caesar", "keyed_caesar_key"),
+        ("Beaufort", "beaufort_key"),
+        ("Autokey", "autokey_key"),
+        ("Columnar Transposition", "columnar_key"),
+        ("Porta", "porta_key"),
+        ("Alberti", "alberti_key"),
+        ("XOR Stream", "stream_key"),
+        ("RC4 Stream", "stream_key"),
+        ("Red", "rotor_key"),
+        ("Green", "rotor_key"),
+    ]
+    for cipher, key_name in key_requirements:
+        if cipher in ciphers and key_name not in names:
+            names.append(key_name)
     if any(cipher in {"Caesar", "Keyed Caesar", "Progressive Caesar"} for cipher in ciphers):
         names.append("shift")
     if any(cipher in MACHINE_CIPHERS for cipher in ciphers):
@@ -992,7 +1136,15 @@ def main() -> None:
     print("Cipher stack:", " -> ".join(json.loads(CIPHERS)))
     params = {{}}
     prompts = {{
-        "key": "Shared cipher keyword/key used by the encrypter: ",
+        "vigenere_key": "Vigenere key used by the encrypter: ",
+        "keyed_caesar_key": "Keyed Caesar alphabet key used by the encrypter: ",
+        "beaufort_key": "Beaufort key used by the encrypter: ",
+        "autokey_key": "Autokey seed key used by the encrypter: ",
+        "columnar_key": "Columnar Transposition key used by the encrypter: ",
+        "porta_key": "Porta key used by the encrypter: ",
+        "alberti_key": "Alberti disk key used by the encrypter: ",
+        "stream_key": "XOR/RC4 stream key used by the encrypter: ",
+        "rotor_key": "Red/Green rotor key used by the encrypter: ",
         "quagmire_plain_key": "Quagmire plaintext alphabet key used by the encrypter: ",
         "quagmire_cipher_key": "Quagmire ciphertext alphabet key used by the encrypter: ",
         "quagmire_indicator_key": "Quagmire indicator key used by the encrypter: ",
@@ -1043,7 +1195,16 @@ class FileEncryptionApp(tk.Tk):
         self.gronsfeld_digits = tk.StringVar(value="314159")
         self.affine_a = tk.StringVar(value="2")
         self.affine_b = tk.StringVar(value="7")
-        self.cipher_key = tk.StringVar(value=secrets.token_urlsafe(12).replace("-", "A").replace("_", "B"))
+        generated_key = secrets.token_urlsafe(12).replace("-", "A").replace("_", "B")
+        self.vigenere_key = tk.StringVar(value=generated_key)
+        self.keyed_caesar_key = tk.StringVar(value=generated_key)
+        self.beaufort_key = tk.StringVar(value=generated_key)
+        self.autokey_key = tk.StringVar(value=generated_key)
+        self.columnar_key = tk.StringVar(value=generated_key)
+        self.porta_key = tk.StringVar(value=generated_key)
+        self.alberti_key = tk.StringVar(value=generated_key)
+        self.stream_key = tk.StringVar(value=generated_key)
+        self.rotor_key = tk.StringVar(value=generated_key)
         self.quagmire_plain_key = tk.StringVar(value="PLAINTEXT")
         self.quagmire_cipher_key = tk.StringVar(value="CIPHERTEXT")
         self.quagmire_indicator_key = tk.StringVar(value="INDICATOR")
@@ -1072,7 +1233,8 @@ class FileEncryptionApp(tk.Tk):
         file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         file_frame.columnconfigure(0, weight=1)
         ttk.Entry(file_frame, textvariable=self.file_path).grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=10)
-        ttk.Button(file_frame, text="Browse...", command=self.choose_file).grid(row=0, column=1, sticky="e", padx=(0, 10), pady=10)
+        ttk.Button(file_frame, text="Browse...", command=self.choose_file).grid(row=0, column=1, sticky="e", padx=(0, 6), pady=10)
+        ttk.Button(file_frame, text="Preview source", command=self.preview_source_file).grid(row=0, column=2, sticky="e", padx=(0, 10), pady=10)
 
         content = ttk.PanedWindow(root, orient="vertical")
         content.grid(row=1, column=0, sticky="nsew")
@@ -1120,7 +1282,15 @@ class FileEncryptionApp(tk.Tk):
         content.add(params_frame, weight=2)
 
         fields = [
-            ("key", "Shared key (Vigenere, rotor, keyed, stream)", ttk.Entry(params_frame, textvariable=self.cipher_key)),
+            ("vigenere_key", "Vigenere key", ttk.Entry(params_frame, textvariable=self.vigenere_key)),
+            ("keyed_caesar_key", "Keyed Caesar alphabet key", ttk.Entry(params_frame, textvariable=self.keyed_caesar_key)),
+            ("beaufort_key", "Beaufort key", ttk.Entry(params_frame, textvariable=self.beaufort_key)),
+            ("autokey_key", "Autokey seed key", ttk.Entry(params_frame, textvariable=self.autokey_key)),
+            ("columnar_key", "Columnar Transposition key", ttk.Entry(params_frame, textvariable=self.columnar_key)),
+            ("porta_key", "Porta key", ttk.Entry(params_frame, textvariable=self.porta_key)),
+            ("alberti_key", "Alberti disk key", ttk.Entry(params_frame, textvariable=self.alberti_key)),
+            ("stream_key", "XOR/RC4 stream key", ttk.Entry(params_frame, textvariable=self.stream_key)),
+            ("rotor_key", "Red/Green rotor key", ttk.Entry(params_frame, textvariable=self.rotor_key)),
             ("quagmire_plain_key", "Quagmire plaintext key (I, III, IV)", ttk.Entry(params_frame, textvariable=self.quagmire_plain_key)),
             ("quagmire_cipher_key", "Quagmire ciphertext key (II, III, IV)", ttk.Entry(params_frame, textvariable=self.quagmire_cipher_key)),
             ("quagmire_indicator_key", "Quagmire indicator key (I-IV)", ttk.Entry(params_frame, textvariable=self.quagmire_indicator_key)),
@@ -1154,9 +1324,10 @@ class FileEncryptionApp(tk.Tk):
 
         action_frame = ttk.Frame(root)
         action_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        action_frame.columnconfigure(1, weight=1)
+        action_frame.columnconfigure(2, weight=1)
         ttk.Button(action_frame, text="Create encrypted decryptor script", command=self.create_script).grid(row=0, column=0, sticky="w")
-        ttk.Label(action_frame, textvariable=self.status, wraplength=680).grid(row=0, column=1, sticky="ew", padx=(12, 0))
+        ttk.Button(action_frame, text="Preview encrypted text", command=self.preview_encrypted_text).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(action_frame, textvariable=self.status, wraplength=680).grid(row=0, column=2, sticky="ew", padx=(12, 0))
 
     def _set_all_ciphers(self, value: bool, defaults: bool = False) -> None:
         if defaults:
@@ -1199,37 +1370,134 @@ class FileEncryptionApp(tk.Tk):
     def selected_ciphers(self) -> list[str]:
         return [cipher for cipher in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS if self.cipher_vars[cipher].get()]
 
-    def create_script(self) -> None:
+    def _collect_encrypt_request(self) -> tuple[Path, list[str], dict[str, str]]:
+        source = Path(self.file_path.get()).expanduser()
+        if not source.is_file():
+            raise FileNotFoundError("Choose an existing file first.")
+        ciphers = self.selected_ciphers()
+        if not ciphers:
+            raise ValueError("Select at least one cipher.")
+        params = {
+            "key": self.vigenere_key.get().strip(),
+            "vigenere_key": self.vigenere_key.get().strip(),
+            "keyed_caesar_key": self.keyed_caesar_key.get().strip(),
+            "beaufort_key": self.beaufort_key.get().strip(),
+            "autokey_key": self.autokey_key.get().strip(),
+            "columnar_key": self.columnar_key.get().strip(),
+            "porta_key": self.porta_key.get().strip(),
+            "alberti_key": self.alberti_key.get().strip(),
+            "stream_key": self.stream_key.get().strip(),
+            "rotor_key": self.rotor_key.get().strip(),
+            "quagmire_plain_key": self.quagmire_plain_key.get().strip(),
+            "quagmire_cipher_key": self.quagmire_cipher_key.get().strip(),
+            "quagmire_indicator_key": self.quagmire_indicator_key.get().strip(),
+            "shift": self.shift.get().strip(),
+            "rotor_positions": self.rotor_positions.get().strip(),
+            "plugboard_pairs": self.plugboard_pairs.get().strip(),
+            "enigma_rotors": self.enigma_rotors.get().strip(),
+            "enigma_ring_settings": self.enigma_ring_settings.get().strip(),
+            "enigma_reflector": self.enigma_reflector.get().strip(),
+            "purple_switches": self.purple_switches.get().strip(),
+            "purple_alphabet": self.purple_alphabet.get().strip(),
+            "affine_a": self.affine_a.get().strip(),
+            "affine_b": self.affine_b.get().strip(),
+            "step": self.step.get().strip(),
+            "gronsfeld_digits": self.gronsfeld_digits.get().strip(),
+            "rails": self.rails.get().strip(),
+            "rail_offset": self.rail_offset.get().strip(),
+        }
+        validate_params(ciphers, params)
+        return source, ciphers, params
+
+    def _encrypted_text_for(self, source: Path, ciphers: list[str], params: dict[str, str]) -> str:
+        text_file_version = base64.b64encode(source.read_bytes()).decode("ascii")
+        return encrypt_with_ciphers(text_file_version, ciphers, params)
+
+    def preview_source_file(self) -> None:
         try:
             source = Path(self.file_path.get()).expanduser()
             if not source.is_file():
                 raise FileNotFoundError("Choose an existing file first.")
-            ciphers = self.selected_ciphers()
-            if not ciphers:
-                raise ValueError("Select at least one cipher.")
-            params = {
-                "key": self.cipher_key.get().strip(),
-                "quagmire_plain_key": self.quagmire_plain_key.get().strip(),
-                "quagmire_cipher_key": self.quagmire_cipher_key.get().strip(),
-                "quagmire_indicator_key": self.quagmire_indicator_key.get().strip(),
-                "shift": self.shift.get().strip(),
-                "rotor_positions": self.rotor_positions.get().strip(),
-                "plugboard_pairs": self.plugboard_pairs.get().strip(),
-                "enigma_rotors": self.enigma_rotors.get().strip(),
-                "enigma_ring_settings": self.enigma_ring_settings.get().strip(),
-                "enigma_reflector": self.enigma_reflector.get().strip(),
-                "purple_switches": self.purple_switches.get().strip(),
-                "purple_alphabet": self.purple_alphabet.get().strip(),
-                "affine_a": self.affine_a.get().strip(),
-                "affine_b": self.affine_b.get().strip(),
-                "step": self.step.get().strip(),
-                "gronsfeld_digits": self.gronsfeld_digits.get().strip(),
-                "rails": self.rails.get().strip(),
-                "rail_offset": self.rail_offset.get().strip(),
-            }
-            validate_params(ciphers, params)
-            text_file_version = base64.b64encode(source.read_bytes()).decode("ascii")
-            encrypted_text = encrypt_with_ciphers(text_file_version, ciphers, params)
+            self._show_file_preview(f"Source preview: {source.name}", source.read_bytes(), source)
+            self.status.set(f"Previewed source file {source}.")
+        except Exception as exc:
+            messagebox.showerror("Could not preview source", str(exc))
+            self.status.set(f"Preview error: {exc}")
+
+    def preview_encrypted_text(self) -> None:
+        try:
+            source, ciphers, params = self._collect_encrypt_request()
+            encrypted_text = self._encrypted_text_for(source, ciphers, params)
+            preview = encrypted_text[:ENCRYPTED_PREVIEW_LIMIT]
+            if len(encrypted_text) > ENCRYPTED_PREVIEW_LIMIT:
+                preview += f"\n\n... truncated after {ENCRYPTED_PREVIEW_LIMIT} of {len(encrypted_text)} characters ..."
+            self._show_text_preview(
+                "Encrypted text preview",
+                f"Cipher stack: {' -> '.join(ciphers)}\nCharacters: {len(encrypted_text)}\n\n{preview}",
+            )
+            self.status.set(f"Previewed encrypted text for {source.name}.")
+        except Exception as exc:
+            messagebox.showerror("Could not preview encrypted text", str(exc))
+            self.status.set(f"Preview error: {exc}")
+
+    def _show_file_preview(self, title: str, data: bytes, source: Path) -> None:
+        kind = detect_preview_kind(data, source)
+        if kind == "image" and self._show_image_preview(title, source):
+            return
+        if kind == "sound":
+            self._show_text_preview(title, sound_preview_summary(data))
+            return
+        if kind == "text":
+            text, truncated = decode_text_preview(data)
+            suffix = f"\n\n... truncated after {TEXT_PREVIEW_LIMIT} of {len(data)} bytes ..." if truncated else ""
+            self._show_text_preview(title, (text or "") + suffix)
+            return
+        self._show_text_preview(title, "Binary file preview (hex):\n\n" + hex_preview(data))
+
+    def _show_image_preview(self, title: str, source: Path) -> bool:
+        try:
+            image = tk.PhotoImage(file=str(source))
+        except tk.TclError:
+            return False
+        scale = max(image.width() // 720, image.height() // 480, 1)
+        if scale > 1:
+            image = image.subsample(scale, scale)
+        window = tk.Toplevel(self)
+        window.title(title)
+        window.geometry("760x560")
+        window.minsize(360, 240)
+        window.preview_image = image
+        ttk.Label(window, text=f"{source.name} ({image.width()}x{image.height()} preview)").pack(anchor="w", padx=10, pady=(10, 4))
+        canvas = tk.Canvas(window, highlightthickness=0)
+        x_scroll = ttk.Scrollbar(window, orient="horizontal", command=canvas.xview)
+        y_scroll = ttk.Scrollbar(window, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+        y_scroll.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
+        x_scroll.pack(side="bottom", fill="x", padx=10)
+        canvas.create_image(0, 0, anchor="nw", image=image)
+        canvas.configure(scrollregion=(0, 0, image.width(), image.height()))
+        return True
+
+    def _show_text_preview(self, title: str, text: str) -> None:
+        window = tk.Toplevel(self)
+        window.title(title)
+        window.geometry("760x560")
+        window.minsize(360, 240)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        text_widget = tk.Text(window, wrap="word")
+        y_scroll = ttk.Scrollbar(window, orient="vertical", command=text_widget.yview)
+        text_widget.configure(yscrollcommand=y_scroll.set)
+        text_widget.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        text_widget.insert("1.0", text)
+        text_widget.configure(state="disabled")
+
+    def create_script(self) -> None:
+        try:
+            source, ciphers, params = self._collect_encrypt_request()
+            encrypted_text = self._encrypted_text_for(source, ciphers, params)
 
             default_name = f"{source.stem}_encrypted_decryptor.py"
             output = filedialog.asksaveasfilename(

@@ -11,13 +11,27 @@ from file_encryptor_gui import (
     EXTRA_CIPHERS,
     apply_cipher,
     build_decryptor_script,
+    decode_text_preview,
+    detect_preview_kind,
     encrypt_with_ciphers,
+    hex_preview,
+    sound_preview_summary,
     validate_params,
+    required_parameter_names,
 )
 
 
 PARAMS = {
     "key": "SecretKey9",
+    "vigenere_key": "SecretKey9",
+    "keyed_caesar_key": "SecretKey9",
+    "beaufort_key": "SecretKey9",
+    "autokey_key": "SecretKey9",
+    "columnar_key": "SecretKey9",
+    "porta_key": "SecretKey9",
+    "alberti_key": "SecretKey9",
+    "stream_key": "SecretKey9",
+    "rotor_key": "SecretKey9",
     "quagmire_plain_key": "PlainKey",
     "quagmire_cipher_key": "CipherKey",
     "quagmire_indicator_key": "Indicator",
@@ -49,7 +63,7 @@ class FileEncryptorTests(unittest.TestCase):
 
     def test_known_accuracy_vectors(self):
         self.assertEqual(apply_cipher("ABC xyz", "Caesar", PARAMS | {"shift": "3"}, decrypt=False), "DEF abc")
-        self.assertEqual(apply_cipher("ATTACKATDAWN", "Vigenere", PARAMS | {"key": "LEMON"}, decrypt=False), "LXFOPVEFRNHR")
+        self.assertEqual(apply_cipher("ATTACKATDAWN", "Vigenere", PARAMS | {"vigenere_key": "LEMON"}, decrypt=False), "LXFOPVEFRNHR")
         self.assertEqual(apply_cipher("ABC xyz", "Atbash", PARAMS, decrypt=False), "ZYX cba")
         self.assertEqual(apply_cipher("WEAREDISCOVEREDFLEEATONCE", "Rail Fence", PARAMS | {"rails": "3", "rail_offset": "0"}, decrypt=False), "WECRLTEERDSOEEFEAOCAIVDEN")
         self.assertEqual(apply_cipher("AAAAA", "Enigma", PARAMS | {"plugboard_pairs": "", "rotor_positions": "AAA", "enigma_rotors": "I II III", "enigma_ring_settings": "AAA", "enigma_reflector": "B"}, decrypt=False), "BDZGO")
@@ -64,7 +78,7 @@ class FileEncryptorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             script_path = Path(directory) / "decryptor.py"
             script_path.write_text(script, encoding="utf-8")
-            user_input = "PlainKey\nCipherKey\nIndicator\nSecretKey9\n7\nABC\nAZ BY\nI II III\nAAA\nB\n9-1,24,6-23\nNOKTYUXEQLHBRMPDICJASVWGZF\n2\n7\n3\n1\nout.bin\n"
+            user_input = "\n".join(PARAMS[name] for name in required_parameter_names(ciphers)) + "\nout.bin\n"
             result = subprocess.run(
                 [sys.executable, str(script_path)],
                 input=user_input,
@@ -75,6 +89,31 @@ class FileEncryptorTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(directory) / "out.bin").read_bytes(), payload)
+
+    def test_preview_helpers_detect_text_binary_and_wav(self):
+        text, truncated = decode_text_preview(b"hello\nworld")
+        self.assertEqual(text, "hello\nworld")
+        self.assertFalse(truncated)
+        self.assertEqual(detect_preview_kind(b"hello\nworld"), "text")
+        self.assertEqual(detect_preview_kind(b"\x00\x01\x02\x03"), "binary")
+        self.assertIn("00000000", hex_preview(b"\x00ABC"))
+
+        wav_data = (
+            b"RIFF"
+            + (36).to_bytes(4, "little")
+            + b"WAVEfmt "
+            + (16).to_bytes(4, "little")
+            + (1).to_bytes(2, "little")
+            + (1).to_bytes(2, "little")
+            + (8000).to_bytes(4, "little")
+            + (8000).to_bytes(4, "little")
+            + (1).to_bytes(2, "little")
+            + (8).to_bytes(2, "little")
+            + b"data"
+            + (0).to_bytes(4, "little")
+        )
+        self.assertEqual(detect_preview_kind(wav_data), "sound")
+        self.assertIn("WAV audio preview", sound_preview_summary(wav_data))
 
     def test_validation_rejects_multiple_expanding_ciphers(self):
         with self.assertRaises(ValueError):
@@ -105,6 +144,14 @@ class FileEncryptorTests(unittest.TestCase):
         trifid_text = apply_cipher(text, "Trifid", PARAMS, decrypt=False)
         encrypted = apply_cipher(trifid_text, "ADFGVX", PARAMS, decrypt=False)
         decoded = apply_cipher(encrypted, "ADFGVX", PARAMS, decrypt=True)
+        self.assertEqual(decoded, trifid_text)
+        self.assertEqual(apply_cipher(decoded, "Trifid", PARAMS, decrypt=True), text)
+
+    def test_alberti_skips_unicode_letters_from_trifid(self):
+        text = "AAU="
+        trifid_text = apply_cipher(text, "Trifid", PARAMS, decrypt=False)
+        encrypted = apply_cipher(trifid_text, "Alberti", PARAMS, decrypt=False)
+        decoded = apply_cipher(encrypted, "Alberti", PARAMS, decrypt=True)
         self.assertEqual(decoded, trifid_text)
         self.assertEqual(apply_cipher(decoded, "Trifid", PARAMS, decrypt=True), text)
 

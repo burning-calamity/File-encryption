@@ -22,17 +22,20 @@ Decimal ASCII.
 python file_encryptor_gui.py
 ```
 
-1. Choose the file to encrypt.
+1. Choose the file to encrypt. Use **Preview source** to inspect supported
+   image files, WAV audio metadata, text files, or a hex preview for other binary
+   files before encrypting.
 2. Select the cipher stack to apply.
 3. Pick or keep the generated parameters. Parameter fields appear only when
-   at least one selected cipher needs them, including separate Quagmire
-   plaintext/ciphertext/indicator keys, optional Enigma plugboard pairs, rotor
-   order, ring settings, reflector/M4 settings, Purple switch/alphabet settings,
-   and Rail Fence offsets, so cipher-specific values are less likely to be
-   confused. Hidden parameters are
-   not parsed for deselected ciphers.
-4. Save the generated `*_encrypted_decryptor.py` script.
-5. Keep the chosen parameters somewhere safe. The generated script asks for the
+   at least one selected cipher needs them. Keyed ciphers use separate fields
+   (for example Vigenere key, Columnar key, stream key, and Red/Green rotor
+   key) instead of one confusing shared key. Quagmire, Enigma, Purple, and Rail
+   Fence settings are also separate, and hidden parameters are not parsed for
+   deselected ciphers.
+4. Use **Preview encrypted text** if you want to inspect the encrypted payload
+   text before saving the generated decryptor script.
+5. Save the generated `*_encrypted_decryptor.py` script.
+6. Keep the chosen parameters somewhere safe. The generated script asks for the
    parameters needed by the selected ciphers before restoring the original file.
 
 The generated decryptor embeds the encrypted text payload and the original file
