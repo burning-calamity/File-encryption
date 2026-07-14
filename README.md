@@ -1,1 +1,78 @@
 # File-encryption
+
+A small Python/Tkinter utility for converting any selected file into Base64 text,
+encrypting that text with a stack of classical ciphers, and writing a standalone
+Python script that can decrypt the payload back to its original file extension.
+
+The cipher list is inspired by the
+[`op-message-encryptor-and-decryptor`](https://github.com/burning-calamity/op-message-encryptor-and-decryptor/tree/main)
+project and includes Caesar, Vigenere, Atbash, Quagmire I-IV, Enigma-style
+with M3/M4 rotor support, plugboard, rotor order, ring settings, and reflectors,
+Red/Purple/Green rotor-machine-style ciphers, with Purple switch/alphabet
+settings following the gremmie/purple syntax, ROT47, Affine, Keyed Caesar,
+Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence with starting
+offset, Columnar Transposition, Bifid, Trifid, Porta, Trithemius, Alberti,
+Reverse, Binary, Baconian, Hex,
+Polybius Square, Morse Code, XOR Stream, RC4 Stream, ADFGVX, Octal, and
+Decimal ASCII.
+
+## Usage
+
+```bash
+python file_encryptor_gui.py
+```
+
+1. Choose the file to encrypt. Use **Preview source** to inspect supported
+   image files, WAV audio metadata, text files, or a hex preview for other binary
+   files before encrypting.
+2. Select the cipher stack to apply.
+3. Pick or keep the generated parameters. Parameter fields appear only when
+   at least one selected cipher needs them. Keyed ciphers use separate fields
+   (for example Vigenere key, Columnar key, stream key, and Red/Green rotor
+   key) instead of one confusing shared key. Quagmire, Enigma, Purple, and Rail
+   Fence settings are also separate, and hidden parameters are not parsed for
+   deselected ciphers.
+4. Use **Preview encrypted text** if you want to inspect the encrypted payload
+   text before saving the generated decryptor script.
+5. Save the generated `*_encrypted_decryptor.py` script.
+6. Keep the chosen parameters somewhere safe. The generated script asks for the
+   parameters needed by the selected ciphers before restoring the original file.
+
+The generated decryptor embeds the encrypted text payload and the original file
+extension, then asks where to write the decrypted output.
+
+
+## Browser version
+
+Open `file_encryptor_web.html` in a modern browser to run a client-side version
+of the encryptor. It can preview source files, preview encrypted text, and
+download a standalone HTML decryptor. All file bytes stay in the browser; no
+server is required. The browser version currently implements the web-safe cipher
+set shown in the page, including Caesar, Vigenere, Atbash, ROT47, Affine, Keyed
+Caesar, Beaufort, Progressive Caesar, Autokey, Gronsfeld, Rail Fence, Columnar
+Transposition, Reverse, Binary, Hex, Octal, Decimal ASCII, XOR Stream, and RC4
+Stream. Use the Python GUI when you need the full historical cipher set.
+
+## Payload-size safety
+
+Some ciphers in the list expand text substantially (for example Binary,
+Baconian, Hex, Polybius Square, Morse Code, XOR Stream, RC4 Stream, ADFGVX,
+Octal, and Decimal ASCII). The GUI's **Select all** action intentionally selects
+only non-expanding ciphers, and script generation rejects stacks with more than
+one expanding cipher to avoid freezing the Tkinter main thread or producing huge
+decryptor scripts.
+
+## Testing
+
+```bash
+python -m unittest -v
+```
+
+The included tests verify every cipher can round-trip text, known historical
+vectors for Caesar, Vigenere, Atbash, Rail Fence, and Enigma match expected
+output, the generated decryptor can restore a payload with a representative
+layered cipher stack, invalid Affine parameters are rejected, Enigma
+plugboard/rotor/ring/reflector/M4 settings, Purple switch/alphabet settings,
+and Quagmire-specific settings round-trip correctly, hidden numeric
+fields do not block unrelated stacks, and unsafe combinations of multiple
+text-expanding ciphers are rejected before a decryptor is created.
