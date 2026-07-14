@@ -54,6 +54,18 @@ EXTRA_CIPHERS = [
     "Decimal ASCII",
 ]
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
+EXPANDING_CIPHERS = {
+    "Binary",
+    "Baconian",
+    "Hex",
+    "Polybius Square",
+    "Morse Code",
+    "XOR Stream",
+    "RC4 Stream",
+    "ADFGVX",
+    "Octal",
+    "Decimal ASCII",
+}
 KEYWORD_CIPHERS = {
     "Vigenere",
     "Quagmire I",
@@ -76,6 +88,18 @@ from pathlib import Path
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
 MACHINE_CIPHERS = {"Enigma", "Red", "Purple", "Green"}
+EXPANDING_CIPHERS = {
+    "Binary",
+    "Baconian",
+    "Hex",
+    "Polybius Square",
+    "Morse Code",
+    "XOR Stream",
+    "RC4 Stream",
+    "ADFGVX",
+    "Octal",
+    "Decimal ASCII",
+}
 KEYWORD_CIPHERS = {"Vigenere", "Quagmire I", "Quagmire II", "Quagmire III", "Quagmire IV", "Keyed Caesar", "Beaufort", "Autokey", "Columnar Transposition", "XOR Stream", "RC4 Stream"}
 
 
@@ -489,6 +513,12 @@ exec(CIPHER_RUNTIME, globals())
 
 
 def validate_params(ciphers: list[str], params: dict[str, str]) -> None:
+    selected_expanders = [cipher for cipher in ciphers if cipher in EXPANDING_CIPHERS]
+    if len(selected_expanders) > 1:
+        raise ValueError(
+            "Select at most one text-expanding cipher at a time to avoid huge payloads: "
+            + ", ".join(selected_expanders)
+        )
     if any(cipher in KEYWORD_CIPHERS or cipher in MACHINE_CIPHERS for cipher in ciphers):
         if not params.get("key"):
             raise ValueError("A shared keyword/key is required for the selected ciphers.")
@@ -650,20 +680,27 @@ class FileEncryptionApp(tk.Tk):
         content.add(params_frame, weight=2)
 
         fields = [
-            ("Shared keyword/key", ttk.Entry(params_frame, textvariable=self.cipher_key)),
-            ("Shift", ttk.Spinbox(params_frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10)),
-            ("Rotor positions", ttk.Entry(params_frame, textvariable=self.rotor_positions)),
-            ("Affine a (coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
-            ("Affine b", ttk.Spinbox(params_frame, from_=0, to=64, textvariable=self.affine_b, width=10)),
-            ("Progressive step", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.step, width=10)),
-            ("Gronsfeld digits", ttk.Entry(params_frame, textvariable=self.gronsfeld_digits)),
-            ("Rail Fence rails", ttk.Spinbox(params_frame, from_=2, to=20, textvariable=self.rails, width=10)),
+            ("key", "Keyword/key (Vigenere, Quagmire, rotor, keyed, stream)", ttk.Entry(params_frame, textvariable=self.cipher_key)),
+            ("shift", "Shift (Caesar, Keyed Caesar, Progressive Caesar)", ttk.Spinbox(params_frame, from_=1, to=len(ALPHABET) - 1, textvariable=self.shift, width=10)),
+            ("rotor_positions", "Rotor positions (Enigma, Red, Purple, Green)", ttk.Entry(params_frame, textvariable=self.rotor_positions)),
+            ("affine_a", "Affine a (Affine only, coprime with 65)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.affine_a, width=10)),
+            ("affine_b", "Affine b (Affine only)", ttk.Spinbox(params_frame, from_=0, to=64, textvariable=self.affine_b, width=10)),
+            ("step", "Progressive step (Progressive Caesar only)", ttk.Spinbox(params_frame, from_=1, to=64, textvariable=self.step, width=10)),
+            ("gronsfeld_digits", "Gronsfeld digits (Gronsfeld only)", ttk.Entry(params_frame, textvariable=self.gronsfeld_digits)),
+            ("rails", "Rail Fence rails (Rail Fence only)", ttk.Spinbox(params_frame, from_=2, to=20, textvariable=self.rails, width=10)),
         ]
-        for index, (label, widget) in enumerate(fields):
+        self.parameter_controls = []
+        for index, (name, label, widget) in enumerate(fields):
             row = (index // 4) * 2
             column = index % 4
-            ttk.Label(params_frame, text=label).grid(row=row, column=column, sticky="w", padx=10, pady=(10, 2))
+            label_widget = ttk.Label(params_frame, text=label)
+            label_widget.grid(row=row, column=column, sticky="w", padx=10, pady=(10, 2))
             widget.grid(row=row + 1, column=column, sticky="ew", padx=10, pady=(0, 10))
+            self.parameter_controls.append((name, label_widget, widget))
+
+        for variable in self.cipher_vars.values():
+            variable.trace_add("write", lambda *_args: self._refresh_parameter_visibility())
+        self._refresh_parameter_visibility()
 
         action_frame = ttk.Frame(root)
         action_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -672,8 +709,36 @@ class FileEncryptionApp(tk.Tk):
         ttk.Label(action_frame, textvariable=self.status, wraplength=680).grid(row=0, column=1, sticky="ew", padx=(12, 0))
 
     def _set_all_ciphers(self, value: bool, defaults: bool = False) -> None:
-        for cipher, variable in self.cipher_vars.items():
-            variable.set(cipher in DEFAULT_CIPHER_ORDER if defaults else value)
+        if defaults:
+            for cipher, variable in self.cipher_vars.items():
+                variable.set(cipher in DEFAULT_CIPHER_ORDER)
+            self.status.set("Restored the default non-expanding cipher stack.")
+            self._refresh_parameter_visibility()
+            return
+
+        if value:
+            for cipher, variable in self.cipher_vars.items():
+                variable.set(cipher not in EXPANDING_CIPHERS)
+            self.status.set(
+                "Selected all non-expanding ciphers. Add at most one expanding cipher manually to avoid huge decryptor payloads."
+            )
+            self._refresh_parameter_visibility()
+            return
+
+        for variable in self.cipher_vars.values():
+            variable.set(False)
+        self.status.set("Cleared all ciphers.")
+        self._refresh_parameter_visibility()
+
+    def _refresh_parameter_visibility(self) -> None:
+        required = set(required_parameter_names(self.selected_ciphers()))
+        for name, label_widget, input_widget in getattr(self, "parameter_controls", []):
+            if name in required:
+                label_widget.grid()
+                input_widget.grid()
+            else:
+                label_widget.grid_remove()
+                input_widget.grid_remove()
 
     def choose_file(self) -> None:
         selected = filedialog.askopenfilename(title="Choose a file to encrypt")

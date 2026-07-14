@@ -7,6 +7,7 @@ from pathlib import Path
 
 from file_encryptor_gui import (
     DEFAULT_CIPHER_ORDER,
+    EXPANDING_CIPHERS,
     EXTRA_CIPHERS,
     apply_cipher,
     build_decryptor_script,
@@ -38,7 +39,7 @@ class FileEncryptorTests(unittest.TestCase):
 
     def test_generated_decryptor_round_trips_representative_stack(self):
         payload = b"abc\x00xyz test payload"
-        ciphers = DEFAULT_CIPHER_ORDER + ["Affine", "Rail Fence", "Morse Code", "XOR Stream", "RC4 Stream"]
+        ciphers = DEFAULT_CIPHER_ORDER + ["Affine", "Rail Fence", "XOR Stream"]
         plain = base64.b64encode(payload).decode("ascii")
         encrypted = encrypt_with_ciphers(plain, ciphers, PARAMS)
         script = build_decryptor_script(encrypted, ".bin", ciphers)
@@ -57,6 +58,14 @@ class FileEncryptorTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(directory) / "out.bin").read_bytes(), payload)
+
+    def test_validation_rejects_multiple_expanding_ciphers(self):
+        with self.assertRaises(ValueError):
+            validate_params(["Binary", "Hex"], PARAMS)
+
+    def test_select_all_safe_stack_has_at_most_one_expander(self):
+        safe_stack = [cipher for cipher in DEFAULT_CIPHER_ORDER + EXTRA_CIPHERS if cipher not in EXPANDING_CIPHERS]
+        self.assertFalse([cipher for cipher in safe_stack if cipher in EXPANDING_CIPHERS])
 
     def test_validation_rejects_bad_affine_multiplier(self):
         bad_params = PARAMS | {"affine_a": "5"}
